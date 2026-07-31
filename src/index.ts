@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { createBot } from "./bot/create-bot.js";
+import { createBot, registerBotCommands } from "./bot/create-bot.js";
 import { UserStore } from "./store/user-store.js";
 import { tickReminders } from "./scheduler/runner.js";
 
@@ -38,6 +38,10 @@ process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 console.log(`Pause Bot starting (long polling). DB: ${dbPath}`);
+// Publish slash commands so Telegram shows them when the user types `/`.
+// bot.command() handlers alone do not populate the client menu.
+await registerBotCommands(bot);
+
 await bot.start({
   onStart: (info) => {
     console.log(`Logged in as @${info.username}`);

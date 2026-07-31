@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { UserStore } from "../store/user-store.js";
-import { createBot } from "./create-bot.js";
+import { createBot, registerBotCommands, BOT_COMMANDS } from "./create-bot.js";
 import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
 import { okResult, testBotInfo } from "../test/fake-telegram.js";
 
@@ -101,6 +101,23 @@ describe("Bot handlers (fake Telegram API)", () => {
     const msg = [...sent].reverse().find((s) => s.method === "sendMessage");
     return String(msg?.payload["text"] ?? "");
   }
+
+  it("registers slash commands via setMyCommands for the Telegram / menu", async () => {
+    // Telegram clients populate the `/` menu from setMyCommands, not from
+    // bot.command() handlers. Without this call the menu stays empty.
+    const bot = botWithCapture();
+    await registerBotCommands(bot);
+    const call = sent.find((s) => s.method === "setMyCommands");
+    expect(call).toBeDefined();
+    const commands = call!.payload["commands"] as Array<{
+      command: string;
+      description: string;
+    }>;
+    expect(commands.map((c) => c.command).sort()).toEqual(
+      [...BOT_COMMANDS].map((c) => c.command).sort(),
+    );
+    expect(commands.every((c) => c.description.length >= 3)).toBe(true);
+  });
 
   it("tells group chats to use private", async () => {
     const bot = botWithCapture();

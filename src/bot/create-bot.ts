@@ -1,4 +1,5 @@
 import { Bot, type Context, type BotConfig } from "grammy";
+import type { BotCommand } from "grammy/types";
 import {
   BotApp,
   formatSetupComplete,
@@ -13,6 +14,26 @@ import {
 } from "./keyboards.js";
 import type { UserStore } from "../store/user-store.js";
 import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
+
+/**
+ * Commands published via setMyCommands so Telegram clients show them when the
+ * user types `/`. bot.command() only registers in-process handlers — it does
+ * not populate the client menu.
+ */
+export const BOT_COMMANDS: readonly BotCommand[] = [
+  { command: "start", description: "Setup or show status" },
+  { command: "status", description: "Current settings" },
+  { command: "on", description: "Turn Eye Rest on" },
+  { command: "off", description: "Turn Eye Rest off" },
+  { command: "timezone", description: "Set or pick timezone" },
+  { command: "window", description: "Set or pick Active Window" },
+  { command: "delete", description: "Wipe all your data" },
+];
+
+/** Publish BOT_COMMANDS to Telegram (powers the `/` slash menu). */
+export async function registerBotCommands(bot: Bot): Promise<void> {
+  await bot.api.setMyCommands(BOT_COMMANDS);
+}
 
 export function createBot(
   token: string,
