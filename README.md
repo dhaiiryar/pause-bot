@@ -21,13 +21,17 @@ Domain language: [`CONTEXT.md`](./CONTEXT.md). Decisions: [`docs/adr/`](./docs/a
 
 ## Setup (homelab)
 
+**AI agent E2E (clone → configure → start → smoke test):**  
+[docs/AGENT_E2E_LOCAL_SETUP.md](./docs/AGENT_E2E_LOCAL_SETUP.md) — share that file with an agent.
+
 ```bash
 cp .env.example .env
-# edit BOT_TOKEN=
+# edit BOT_TOKEN=  (note: the app does not auto-load .env; export vars or prefix the command)
 
 npm install
 npm test
 npm run typecheck
+export BOT_TOKEN=…   # required in the process environment
 npm run dev
 ```
 
