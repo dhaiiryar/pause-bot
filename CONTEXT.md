@@ -1,0 +1,33 @@
+# Pause Bot
+
+A multi-user Telegram bot that reminds people to perform healthcare activities on a schedule.
+
+## Language
+
+**User**:
+A person who chats with the bot in a private chat; each Telegram identity is one User. Reminders are sent only in that private chat, not in groups.
+_Avoid_: Account, customer, member
+
+**Activity**:
+A healthcare practice the bot can prompt someone to do. For a given User an Activity is either on (Reminders may fire) or off (Reminders suppressed; settings kept). Each Activity has its own Interval; only Eye Rest ships in V1.
+_Avoid_: Habit, task, chore, exercise (too sport-specific)
+
+**Eye Rest**:
+The first Activity: a periodic break from near-screen focus. Interval is every 20 minutes inside the Active Window. Each Reminder instructs the classic 20-20-20 pause (look ~20 feet / 6m away for 20 seconds).
+_Avoid_: Using "20-20-20" as the Activity's name in the model (fine in User-facing copy)
+
+**Active Window**:
+The daily time range during which Reminders may fire for a User; shared across all of that User's Activities. The same window applies every calendar day. Start and end are on the same local calendar day (end after start); ranges must not cross midnight.
+_Avoid_: Configured time, schedule hours, work hours (unless we later mean work specifically)
+
+**Interval**:
+How often a Reminder fires for one Activity while inside the Active Window (for eye rest V1: every 20 minutes). The grid starts at Active Window open; a fire time must still fall inside the window.
+_Avoid_: Frequency, cadence (unless we need a more abstract term later)
+
+**Reminder**:
+A prompt the bot sends a User that it is time to perform an Activity.
+_Avoid_: Notification, alert, ping (implementation-flavored)
+
+**Timezone**:
+A User's local timezone as an IANA zone (e.g. Asia/Jakarta); Active Windows are interpreted in this timezone. Shared across all of that User's Activities.
+_Avoid_: UTC offset alone (offsets ignore DST)

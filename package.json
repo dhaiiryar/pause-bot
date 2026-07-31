@@ -1,0 +1,31 @@
+{
+  "name": "pause-bot",
+  "version": "1.0.0",
+  "description": "Multi-user Telegram bot for healthcare activity reminders (Eye Rest first)",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": ["telegram", "bot", "eye-rest", "reminders"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^13.0.2",
+    "grammy": "^1.45.1",
+    "luxon": "^3.7.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/luxon": "^3.7.2",
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
