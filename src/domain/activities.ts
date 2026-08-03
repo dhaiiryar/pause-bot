@@ -4,6 +4,8 @@ export type ActivityId = typeof EYE_REST_ACTIVITY_ID;
 
 export const EYE_REST_INTERVAL_MINUTES = 20;
 
+export const EYE_REST_SNOOZE_MINUTES = 5;
+
 export const EYE_REST_MESSAGE =
   "👁 Eye rest — look ~20 feet / 6 metres away for 20 seconds. (20-20-20)";
 

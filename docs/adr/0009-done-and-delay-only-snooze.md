@@ -1,0 +1,3 @@
+# Done and delay-only Snooze on Reminders
+
+V1 Reminders were fire-and-forget. The next ship makes Eye Rest Reminders actionable with **Done** (no schedule effect) and **Snooze** (+5 minutes delay-only: one pending fire, Interval grid suppressed meanwhile, dropped if outside the Active Window, chainable until the window ends). Only the latest Reminder per Activity is actionable. Pending Snooze clears on off, Active Window/Timezone change, or delete—consistent with immediate schedule recompute. We rejected extra-ping snooze (double fires), grid-shifting snooze (fights from-window-open Interval), and Skip/streaks/second Activities for this slice so the loop deepens before the product widens.

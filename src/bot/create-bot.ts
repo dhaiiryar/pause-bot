@@ -5,15 +5,25 @@ import {
   formatSetupComplete,
   formatStatus,
   type AppResult,
+  type Clock,
+  type ReminderActionResult,
 } from "./app.js";
 import {
   deleteConfirmKeyboard,
+  emptyReplyMarkup,
   mainMenuKeyboard,
   timezoneKeyboard,
   windowPresetsKeyboard,
 } from "./keyboards.js";
 import type { UserStore } from "../store/user-store.js";
-import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
+import {
+  EYE_REST_ACTIVITY_ID,
+  type ActivityId,
+} from "../domain/activities.js";
+
+export type CreateBotOptions = BotConfig<Context> & {
+  now?: Clock;
+};
 
 /**
  * Commands published via setMyCommands so Telegram clients show them when the
@@ -38,9 +48,10 @@ export async function registerBotCommands(bot: Bot): Promise<void> {
 export function createBot(
   token: string,
   store: UserStore,
-  config?: BotConfig<Context>,
+  options?: CreateBotOptions,
 ): Bot {
-  const app = new BotApp(store);
+  const { now, ...config } = options ?? {};
+  const app = now ? new BotApp(store, now) : new BotApp(store);
   const bot = new Bot(token, config);
 
   bot.command("start", async (ctx) => {
@@ -114,9 +125,16 @@ export function createBot(
       return;
     }
     store.ensureUser(ctx.from.id, ctx.chat.id);
-    await ctx.answerCallbackQuery();
     const data = ctx.callbackQuery.data;
     const userId = ctx.from.id;
+    const messageId = ctx.callbackQuery.message?.message_id;
+
+    if (data.startsWith("rem:")) {
+      await handleReminderCallback(ctx, app, data, userId, messageId);
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
 
     if (data.startsWith("tz:")) {
       const zone = data.slice(3);
@@ -173,6 +191,87 @@ export function createBot(
   });
 
   return bot;
+}
+
+async function handleReminderCallback(
+  ctx: Context,
+  app: BotApp,
+  data: string,
+  userId: number,
+  messageId: number | undefined,
+): Promise<void> {
+  if (messageId == null) {
+    await ctx.answerCallbackQuery({ text: "That Reminder is out of date." });
+    return;
+  }
+  const parts = data.split(":");
+  const action = parts[1];
+  const activityId = parts[2] as ActivityId | undefined;
+  if (activityId !== EYE_REST_ACTIVITY_ID) {
+    await ctx.answerCallbackQuery({ text: "Unknown activity." });
+    return;
+  }
+
+  let result: ReminderActionResult;
+  if (action === "done") {
+    result = app.doneReminder(userId, activityId, messageId);
+  } else if (action === "snooze") {
+    result = app.snoozeReminder(userId, activityId, messageId);
+  } else {
+    await ctx.answerCallbackQuery({ text: "Unknown action." });
+    return;
+  }
+
+  await applyReminderAction(ctx, result);
+}
+
+async function applyReminderAction(
+  ctx: Context,
+  result: ReminderActionResult,
+): Promise<void> {
+  switch (result.kind) {
+    case "stale":
+      await ctx.answerCallbackQuery({
+        text: "That Reminder is out of date.",
+      });
+      return;
+    case "need_setup":
+      await ctx.answerCallbackQuery({ text: "Finish setup first (/start)." });
+      return;
+    case "error":
+      await ctx.answerCallbackQuery({ text: result.message });
+      return;
+    case "done":
+      await ctx.answerCallbackQuery({ text: "Done." });
+      await stripReminderButtons(ctx, result.stripMessageId);
+      return;
+    case "snoozed":
+      await ctx.answerCallbackQuery({
+        text: `Snoozed ${result.minutes} min.`,
+      });
+      await stripReminderButtons(ctx, result.stripMessageId);
+      return;
+    case "snooze_outside_window":
+      await ctx.answerCallbackQuery({
+        text: "Snooze would be outside your Active Window.",
+      });
+      await stripReminderButtons(ctx, result.stripMessageId);
+      return;
+  }
+}
+
+async function stripReminderButtons(
+  ctx: Context,
+  messageId: number,
+): Promise<void> {
+  if (!ctx.chat) return;
+  try {
+    await ctx.api.editMessageReplyMarkup(ctx.chat.id, messageId, {
+      reply_markup: emptyReplyMarkup(),
+    });
+  } catch {
+    // best-effort
+  }
 }
 
 const PRIVATE_ONLY_TEXT = "Please message me in a private chat.";

@@ -5,9 +5,13 @@ import {
   EYE_REST_ACTIVITY_ID,
   EYE_REST_MESSAGE,
 } from "../domain/activities.js";
-import { firesDueAt } from "../domain/schedule.js";
+import { reminderDueAt } from "../domain/schedule.js";
 import { isPermanentDeliveryFailure } from "../delivery/policy.js";
 import type { UserStore } from "../store/user-store.js";
+import {
+  emptyReplyMarkup,
+  reminderKeyboard,
+} from "../bot/keyboards.js";
 
 export type Clock = () => DateTime;
 
@@ -24,28 +28,51 @@ export async function tickReminders(options: {
   for (const user of users) {
     if (!user.timezone || !user.activeWindow) continue;
     const activity = user.activities[EYE_REST_ACTIVITY_ID];
-    const due = firesDueAt({
+    const due = reminderDueAt({
       now,
       window: user.activeWindow,
       intervalMinutes: activity.intervalMinutes,
       zone: user.timezone,
+      snoozeUntilIso: activity.snoozeUntilIso,
+      lastFireIso: activity.lastFireIso,
     });
-    if (!due) continue;
 
-    const fireIso = now
-      .setZone(user.timezone)
-      .set({ second: 0, millisecond: 0 })
-      .toUTC()
-      .toISO();
-    if (!fireIso) continue;
-    if (activity.lastFireIso === fireIso) continue;
+    if (due.clearSnooze && activity.snoozeUntilIso) {
+      options.store.setSnoozeUntilIso(
+        user.telegramUserId,
+        EYE_REST_ACTIVITY_ID,
+        null,
+      );
+    }
+    if (!due.due) continue;
 
     try {
-      await options.bot.api.sendMessage(user.chatId, EYE_REST_MESSAGE);
+      if (activity.latestReminderMessageId != null) {
+        try {
+          await options.bot.api.editMessageReplyMarkup(
+            user.chatId,
+            activity.latestReminderMessageId,
+            { reply_markup: emptyReplyMarkup() },
+          );
+        } catch {
+          // best-effort strip of superseded Reminder buttons
+        }
+      }
+
+      const message = await options.bot.api.sendMessage(
+        user.chatId,
+        EYE_REST_MESSAGE,
+        { reply_markup: reminderKeyboard() },
+      );
       options.store.setLastFireIso(
         user.telegramUserId,
         EYE_REST_ACTIVITY_ID,
-        fireIso,
+        due.fireIso,
+      );
+      options.store.setLatestReminderMessageId(
+        user.telegramUserId,
+        EYE_REST_ACTIVITY_ID,
+        message.message_id,
       );
       sent += 1;
     } catch (err) {

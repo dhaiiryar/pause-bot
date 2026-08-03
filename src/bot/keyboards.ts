@@ -1,5 +1,9 @@
 import { InlineKeyboard } from "grammy";
 import { COMMON_TIMEZONES } from "./app.js";
+import {
+  EYE_REST_ACTIVITY_ID,
+  EYE_REST_SNOOZE_MINUTES,
+} from "../domain/activities.js";
 
 export function timezoneKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
@@ -43,4 +47,18 @@ export function windowPresetsKeyboard(): InlineKeyboard {
     .text("00:00–23:59 (all day)", "win:00:00-23:59")
     .row()
     .text("Custom: /window HH:MM HH:MM", "win:custom");
+}
+
+export function reminderKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Done", `rem:done:${EYE_REST_ACTIVITY_ID}`)
+    .text(
+      `Snooze ${EYE_REST_SNOOZE_MINUTES} min`,
+      `rem:snooze:${EYE_REST_ACTIVITY_ID}`,
+    );
+}
+
+/** Telegram shape that removes inline buttons from a message. */
+export function emptyReplyMarkup(): { inline_keyboard: [] } {
+  return { inline_keyboard: [] };
 }

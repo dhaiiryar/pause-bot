@@ -104,4 +104,64 @@ describe("User settings store", () => {
     store.setActiveWindow(1, { startMinutes: 10 * 60, endMinutes: 16 * 60 });
     expect(store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
   });
+
+  it("persists Snooze until and latest Reminder message id", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setSnoozeUntilIso(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:25:00.000Z",
+    );
+    store.setLatestReminderMessageId(1, EYE_REST_ACTIVITY_ID, 42);
+    const activity = store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID];
+    expect(activity.snoozeUntilIso).toBe("2026-03-15T09:25:00.000Z");
+    expect(activity.latestReminderMessageId).toBe(42);
+  });
+
+  it("clears pending Snooze when Activity is turned off", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setSnoozeUntilIso(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:25:00.000Z",
+    );
+    store.setActivityOn(1, EYE_REST_ACTIVITY_ID, false);
+    expect(
+      store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
+    ).toBeNull();
+  });
+
+  it("clears pending Snooze when Active Window changes", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setSnoozeUntilIso(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:25:00.000Z",
+    );
+    store.setActiveWindow(1, { startMinutes: 10 * 60, endMinutes: 16 * 60 });
+    expect(
+      store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
+    ).toBeNull();
+  });
+
+  it("clears pending Snooze when Timezone changes", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setSnoozeUntilIso(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:25:00.000Z",
+    );
+    store.setTimezone(1, "Asia/Jakarta");
+    expect(
+      store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
+    ).toBeNull();
+  });
 });

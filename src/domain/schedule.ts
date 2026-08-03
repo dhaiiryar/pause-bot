@@ -79,3 +79,72 @@ export function firesDueAt(input: ScheduleInput): boolean {
   const offset = minutes - input.window.startMinutes;
   return offset % input.intervalMinutes === 0;
 }
+
+export type SnoozeTargetInput = {
+  now: DateTime;
+  snoozeMinutes: number;
+  window: ActiveWindow;
+  zone: string;
+};
+
+/** UTC ISO for delayed fire, or null if that instant is outside the Active Window. */
+export function snoozeTargetIso(input: SnoozeTargetInput): string | null {
+  const local = input.now
+    .setZone(input.zone)
+    .set({ second: 0, millisecond: 0 })
+    .plus({ minutes: input.snoozeMinutes });
+  const minutes = minutesFromMidnight(local);
+  if (!windowContains(input.window, minutes)) {
+    return null;
+  }
+  return local.toUTC().toISO();
+}
+
+export type ReminderDueInput = ScheduleInput & {
+  snoozeUntilIso: string | null;
+  lastFireIso: string | null;
+};
+
+export type ReminderDueResult =
+  | { due: false; clearSnooze: boolean }
+  | { due: true; fireIso: string; clearSnooze: boolean };
+
+/**
+ * Whether a Reminder should fire now, honoring delay-only Snooze
+ * (suppress grid while pending; fire at/after snooze time inside window).
+ */
+export function reminderDueAt(input: ReminderDueInput): ReminderDueResult {
+  const local = localNow(input).set({ second: 0, millisecond: 0 });
+  const fireIso = local.toUTC().toISO();
+  if (!fireIso) {
+    return { due: false, clearSnooze: false };
+  }
+
+  if (input.snoozeUntilIso) {
+    const snoozeLocal = DateTime.fromISO(input.snoozeUntilIso, { zone: "utc" })
+      .setZone(input.zone)
+      .set({ second: 0, millisecond: 0 });
+    if (local < snoozeLocal) {
+      return { due: false, clearSnooze: false };
+    }
+    // Only fire on the same local day as the Snooze target; never resurrect next day.
+    if (
+      !local.hasSame(snoozeLocal, "day") ||
+      !windowContains(input.window, minutesFromMidnight(local))
+    ) {
+      return { due: false, clearSnooze: true };
+    }
+    if (input.lastFireIso === fireIso) {
+      return { due: false, clearSnooze: true };
+    }
+    return { due: true, fireIso, clearSnooze: true };
+  }
+
+  if (!firesDueAt(input)) {
+    return { due: false, clearSnooze: false };
+  }
+  if (input.lastFireIso === fireIso) {
+    return { due: false, clearSnooze: false };
+  }
+  return { due: true, fireIso, clearSnooze: false };
+}

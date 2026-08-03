@@ -8,7 +8,8 @@ Domain language: [`CONTEXT.md`](./CONTEXT.md). Decisions: [`docs/adr/`](./docs/a
 
 - Public multi-user; **private chats only**
 - Setup: **Timezone** (IANA, common list + Other) → **Active Window** → Eye Rest **on**
-- Fire-and-forget reminders; grid from window start, every 20 minutes
+- Reminders on a grid from window start, every 20 minutes
+- Each Reminder offers **Done** (no schedule change) and **Snooze** (+5 min delay-only)
 - `/on` `/off` (settings kept), `/delete` (wipe), `/status`, `/window`, `/timezone`
 - Menu-first inline keyboards
 - Permanent Telegram delivery failure → auto-off, keep settings

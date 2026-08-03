@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { DateTime } from "luxon";
 import { UserStore } from "../store/user-store.js";
 import { createBot, registerBotCommands, BOT_COMMANDS } from "./create-bot.js";
 import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
@@ -44,7 +45,12 @@ function groupUpdate(text: string) {
   };
 }
 
-function callbackUpdate(data: string, userId = 1, chatId = 10) {
+function callbackUpdate(
+  data: string,
+  userId = 1,
+  chatId = 10,
+  messageId = 2,
+) {
   return {
     update_id: Math.floor(Math.random() * 1_000_000),
     callback_query: {
@@ -53,9 +59,10 @@ function callbackUpdate(data: string, userId = 1, chatId = 10) {
       chat_instance: "x",
       data,
       message: {
-        message_id: 2,
+        message_id: messageId,
         date: Math.floor(Date.now() / 1000),
         chat: { id: chatId, type: "private" as const, first_name: "T" },
+        text: "👁 Eye rest",
       },
     },
   };
@@ -163,5 +170,88 @@ describe("Bot handlers (fake Telegram API)", () => {
     await bot.handleUpdate(callbackUpdate("act:delete"));
     expect(store.getUser(1)).toBeNull();
     expect(lastText()).toMatch(/deleted/i);
+  });
+
+  it("Done on latest Reminder strips buttons and does not set Snooze", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLatestReminderMessageId(1, EYE_REST_ACTIVITY_ID, 55);
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("rem:done:eye_rest", 1, 10, 55));
+    expect(
+      store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
+    ).toBeNull();
+    const edit = sent.find((s) => s.method === "editMessageReplyMarkup");
+    expect(edit?.payload).toMatchObject({
+      chat_id: 10,
+      message_id: 55,
+      reply_markup: { inline_keyboard: [] },
+    });
+    const answered = sent.find((s) => s.method === "answerCallbackQuery");
+    expect(String(answered?.payload["text"] ?? "")).toMatch(/done/i);
+  });
+
+  it("Snooze on latest Reminder sets +5 min delay", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLatestReminderMessageId(1, EYE_REST_ACTIVITY_ID, 55);
+    const now = DateTime.fromISO("2026-03-15T10:00:00", { zone: "UTC" });
+    const bot = createBot("0000000000:TEST_TOKEN_FOR_UNIT_TESTS_ONLY", store, {
+      botInfo: testBotInfo,
+      now: () => now,
+    });
+    bot.api.config.use(async (_prev, method, payload) => {
+      sent.push({ method, payload: payload as Record<string, unknown> });
+      return okResult(true);
+    });
+    await bot.handleUpdate(callbackUpdate("rem:snooze:eye_rest", 1, 10, 55));
+    expect(
+      store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
+    ).toBe("2026-03-15T10:05:00.000Z");
+    const answered = sent.find((s) => s.method === "answerCallbackQuery");
+    expect(String(answered?.payload["text"] ?? "")).toMatch(/snooze/i);
+  });
+
+  it("stale Done/Snooze on superseded Reminder is rejected", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLatestReminderMessageId(1, EYE_REST_ACTIVITY_ID, 99);
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("rem:done:eye_rest", 1, 10, 55));
+    expect(
+      store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
+    ).toBeNull();
+    const answered = sent.find((s) => s.method === "answerCallbackQuery");
+    expect(String(answered?.payload["text"] ?? "").toLowerCase()).toMatch(
+      /out of date|superseded|old/,
+    );
+  });
+
+  it("rejects Snooze when Eye Rest is off", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLatestReminderMessageId(1, EYE_REST_ACTIVITY_ID, 55);
+    store.setActivityOn(1, EYE_REST_ACTIVITY_ID, false);
+    const now = DateTime.fromISO("2026-03-15T10:00:00", { zone: "UTC" });
+    const bot = createBot("0000000000:TEST_TOKEN_FOR_UNIT_TESTS_ONLY", store, {
+      botInfo: testBotInfo,
+      now: () => now,
+    });
+    bot.api.config.use(async (_prev, method, payload) => {
+      sent.push({ method, payload: payload as Record<string, unknown> });
+      return okResult(true);
+    });
+    await bot.handleUpdate(callbackUpdate("rem:snooze:eye_rest", 1, 10, 55));
+    expect(
+      store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
+    ).toBeNull();
+    const answered = sent.find((s) => s.method === "answerCallbackQuery");
+    expect(String(answered?.payload["text"] ?? "").toLowerCase()).toMatch(
+      /off/,
+    );
   });
 });

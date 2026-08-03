@@ -11,6 +11,8 @@ export type ActivityState = {
   on: boolean;
   intervalMinutes: number;
   lastFireIso: string | null;
+  snoozeUntilIso: string | null;
+  latestReminderMessageId: number | null;
 };
 
 export type UserRecord = {
@@ -54,10 +56,31 @@ export class UserStore {
         is_on INTEGER NOT NULL DEFAULT 0,
         interval_minutes INTEGER NOT NULL,
         last_fire_iso TEXT,
+        snooze_until_iso TEXT,
+        latest_reminder_message_id INTEGER,
         PRIMARY KEY (telegram_user_id, activity_id),
         FOREIGN KEY (telegram_user_id) REFERENCES users(telegram_user_id) ON DELETE CASCADE
       );
     `);
+    this.ensureColumn("user_activities", "snooze_until_iso", "TEXT");
+    this.ensureColumn(
+      "user_activities",
+      "latest_reminder_message_id",
+      "INTEGER",
+    );
+  }
+
+  private ensureColumn(
+    table: string,
+    column: string,
+    type: string,
+  ): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
+    if (!cols.some((c) => c.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    }
   }
 
   ensureUser(telegramUserId: number, chatId: number): UserRecord {
@@ -111,7 +134,8 @@ export class UserStore {
 
     const activityRows = this.db
       .prepare(
-        `SELECT activity_id, is_on, interval_minutes, last_fire_iso
+        `SELECT activity_id, is_on, interval_minutes, last_fire_iso,
+                snooze_until_iso, latest_reminder_message_id
          FROM user_activities WHERE telegram_user_id = ?`,
       )
       .all(telegramUserId) as Array<{
@@ -119,6 +143,8 @@ export class UserStore {
       is_on: number;
       interval_minutes: number;
       last_fire_iso: string | null;
+      snooze_until_iso: string | null;
+      latest_reminder_message_id: number | null;
     }>;
 
     const activities = {} as Record<ActivityId, ActivityState>;
@@ -127,6 +153,8 @@ export class UserStore {
         on: false,
         intervalMinutes: defaultIntervalMinutes(id),
         lastFireIso: null,
+        snoozeUntilIso: null,
+        latestReminderMessageId: null,
       };
     }
     for (const a of activityRows) {
@@ -136,6 +164,8 @@ export class UserStore {
           on: a.is_on === 1,
           intervalMinutes: a.interval_minutes,
           lastFireIso: a.last_fire_iso,
+          snoozeUntilIso: a.snooze_until_iso,
+          latestReminderMessageId: a.latest_reminder_message_id,
         };
       }
     }
@@ -165,6 +195,7 @@ export class UserStore {
       this.db
         .prepare(`UPDATE users SET timezone = ? WHERE telegram_user_id = ?`)
         .run(timezone, telegramUserId);
+      this.clearAllSnoozes(telegramUserId);
     });
   }
 
@@ -176,7 +207,17 @@ export class UserStore {
            WHERE telegram_user_id = ?`,
         )
         .run(window.startMinutes, window.endMinutes, telegramUserId);
+      this.clearAllSnoozes(telegramUserId);
     });
+  }
+
+  private clearAllSnoozes(telegramUserId: number): void {
+    this.db
+      .prepare(
+        `UPDATE user_activities SET snooze_until_iso = NULL
+         WHERE telegram_user_id = ?`,
+      )
+      .run(telegramUserId);
   }
 
   /** On first transition to setupComplete, turn Eye Rest on. Later config edits keep on/off. */
@@ -194,11 +235,20 @@ export class UserStore {
     activityId: ActivityId,
     on: boolean,
   ): void {
-    this.db
-      .prepare(
-        `UPDATE user_activities SET is_on = ? WHERE telegram_user_id = ? AND activity_id = ?`,
-      )
-      .run(on ? 1 : 0, telegramUserId, activityId);
+    if (on) {
+      this.db
+        .prepare(
+          `UPDATE user_activities SET is_on = ? WHERE telegram_user_id = ? AND activity_id = ?`,
+        )
+        .run(1, telegramUserId, activityId);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE user_activities SET is_on = 0, snooze_until_iso = NULL
+           WHERE telegram_user_id = ? AND activity_id = ?`,
+        )
+        .run(telegramUserId, activityId);
+    }
   }
 
   setLastFireIso(
@@ -212,6 +262,32 @@ export class UserStore {
          WHERE telegram_user_id = ? AND activity_id = ?`,
       )
       .run(iso, telegramUserId, activityId);
+  }
+
+  setSnoozeUntilIso(
+    telegramUserId: number,
+    activityId: ActivityId,
+    iso: string | null,
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE user_activities SET snooze_until_iso = ?
+         WHERE telegram_user_id = ? AND activity_id = ?`,
+      )
+      .run(iso, telegramUserId, activityId);
+  }
+
+  setLatestReminderMessageId(
+    telegramUserId: number,
+    activityId: ActivityId,
+    messageId: number | null,
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE user_activities SET latest_reminder_message_id = ?
+         WHERE telegram_user_id = ? AND activity_id = ?`,
+      )
+      .run(messageId, telegramUserId, activityId);
   }
 
   deleteUser(telegramUserId: number): void {

@@ -1,4 +1,4 @@
-import { IANAZone } from "luxon";
+import { DateTime, IANAZone } from "luxon";
 import {
   parseActiveWindow,
   formatMinutes,
@@ -6,10 +6,15 @@ import {
 import {
   EYE_REST_ACTIVITY_ID,
   EYE_REST_INTERVAL_MINUTES,
+  EYE_REST_SNOOZE_MINUTES,
+  type ActivityId,
 } from "../domain/activities.js";
+import { snoozeTargetIso } from "../domain/schedule.js";
 import type { UserRecord, UserStore } from "../store/user-store.js";
 
 export type ChatType = "private" | "group" | "supergroup" | "channel";
+
+export type Clock = () => DateTime;
 
 export type AppResult =
   | { kind: "private_only" }
@@ -23,8 +28,19 @@ export type AppResult =
   | { kind: "need_setup" }
   | { kind: "error"; message: string };
 
+export type ReminderActionResult =
+  | { kind: "done"; stripMessageId: number }
+  | { kind: "snoozed"; stripMessageId: number; minutes: number }
+  | { kind: "snooze_outside_window"; stripMessageId: number }
+  | { kind: "stale" }
+  | { kind: "need_setup" }
+  | { kind: "error"; message: string };
+
 export class BotApp {
-  constructor(private readonly store: UserStore) {}
+  constructor(
+    private readonly store: UserStore,
+    private readonly now: Clock = () => DateTime.utc(),
+  ) {}
 
   onStart(input: {
     telegramUserId: number;
@@ -103,6 +119,75 @@ export class BotApp {
     this.store.deleteUser(telegramUserId);
     return { kind: "deleted" };
   }
+
+  doneReminder(
+    telegramUserId: number,
+    activityId: ActivityId,
+    messageId: number,
+  ): ReminderActionResult {
+    return this.withLatestReminder(
+      telegramUserId,
+      activityId,
+      messageId,
+      () => ({ kind: "done", stripMessageId: messageId }),
+    );
+  }
+
+  snoozeReminder(
+    telegramUserId: number,
+    activityId: ActivityId,
+    messageId: number,
+  ): ReminderActionResult {
+    return this.withLatestReminder(
+      telegramUserId,
+      activityId,
+      messageId,
+      (user) => {
+        if (!user.timezone || !user.activeWindow) {
+          return { kind: "need_setup" };
+        }
+        const target = snoozeTargetIso({
+          now: this.now(),
+          snoozeMinutes: EYE_REST_SNOOZE_MINUTES,
+          window: user.activeWindow,
+          zone: user.timezone,
+        });
+        if (!target) {
+          return {
+            kind: "snooze_outside_window",
+            stripMessageId: messageId,
+          };
+        }
+        this.store.setSnoozeUntilIso(telegramUserId, activityId, target);
+        return {
+          kind: "snoozed",
+          stripMessageId: messageId,
+          minutes: EYE_REST_SNOOZE_MINUTES,
+        };
+      },
+    );
+  }
+
+  private withLatestReminder(
+    telegramUserId: number,
+    activityId: ActivityId,
+    messageId: number,
+    act: (user: UserRecord) => ReminderActionResult,
+  ): ReminderActionResult {
+    const user = this.store.getUser(telegramUserId);
+    if (!user?.setupComplete) return { kind: "need_setup" };
+    const activity = user.activities[activityId];
+    if (activity == null) {
+      return { kind: "error", message: "Unknown activity." };
+    }
+    if (activity.latestReminderMessageId !== messageId) {
+      return { kind: "stale" };
+    }
+    if (!activity.on) {
+      return { kind: "error", message: "Eye Rest is off." };
+    }
+    return act(user);
+  }
 }
 
 export function formatStatus(user: UserRecord): string {
@@ -123,7 +208,7 @@ export function formatSetupComplete(user: UserRecord): string {
     "You're set. Eye Rest is on.",
     formatStatus(user),
     "",
-    "Reminders are fire-and-forget during your Active Window.",
+    "Reminders offer Done and Snooze during your Active Window.",
     "Commands: /status /off /on /window /timezone /delete",
   ].join("\n");
 }
