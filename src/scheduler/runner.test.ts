@@ -6,7 +6,11 @@ import { DateTime } from "luxon";
 import { Bot, GrammyError } from "grammy";
 import { UserStore } from "../store/user-store.js";
 import { tickReminders } from "./runner.js";
-import { EYE_REST_ACTIVITY_ID, EYE_REST_MESSAGE } from "../domain/activities.js";
+import {
+  EYE_REST_ACTIVITY_ID,
+  EYE_REST_MESSAGE,
+  EYE_REST_MESSAGES,
+} from "../domain/activities.js";
 import { okResult, testBotInfo } from "../test/fake-telegram.js";
 
 describe("Reminder runner", () => {
@@ -76,7 +80,12 @@ describe("Reminder runner", () => {
     const messages: Array<{ chatId: number; text: string }> = [];
     const bot = botThatSends((chatId, text) => messages.push({ chatId, text }));
     const now = DateTime.fromISO("2026-03-15T09:00:00", { zone: "UTC" });
-    const result = await tickReminders({ store, bot, now: () => now });
+    const result = await tickReminders({
+      store,
+      bot,
+      now: () => now,
+      pickCopy: () => EYE_REST_MESSAGE,
+    });
     expect(result.sent).toBe(1);
     expect(messages[0]).toEqual({ chatId: 10, text: EYE_REST_MESSAGE });
     expect(store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].lastFireIso).toBe(
@@ -89,6 +98,20 @@ describe("Reminder runner", () => {
         "2026-01-01T00:00:00.000Z",
       ),
     ).toEqual([{ fireIso: "2026-03-15T09:00:00.000Z", action: null }]);
+  });
+
+  it("uses the injected copy picker for the Reminder text", async () => {
+    setupUser();
+    const messages: string[] = [];
+    const bot = botThatSends((_c, text) => messages.push(text));
+    const now = DateTime.fromISO("2026-03-15T09:00:00", { zone: "UTC" });
+    await tickReminders({
+      store,
+      bot,
+      now: () => now,
+      pickCopy: () => EYE_REST_MESSAGES[3]!,
+    });
+    expect(messages[0]).toBe(EYE_REST_MESSAGES[3]);
   });
 
   it("attaches Done and Snooze and records latest Reminder message id", async () => {

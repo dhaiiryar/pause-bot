@@ -3,7 +3,8 @@ import type { Bot } from "grammy";
 import { GrammyError } from "grammy";
 import {
   EYE_REST_ACTIVITY_ID,
-  EYE_REST_MESSAGE,
+  defaultReminderCopyPicker,
+  type ReminderCopyPicker,
 } from "../domain/activities.js";
 import { reminderDueAt } from "../domain/schedule.js";
 import { isPermanentDeliveryFailure } from "../delivery/policy.js";
@@ -19,8 +20,10 @@ export async function tickReminders(options: {
   store: UserStore;
   bot: Bot;
   now?: Clock;
+  pickCopy?: ReminderCopyPicker;
 }): Promise<{ sent: number; autoOff: number }> {
   const now = (options.now ?? (() => DateTime.utc()))();
+  const pickCopy = options.pickCopy ?? defaultReminderCopyPicker;
   const users = options.store.listSchedulable(EYE_REST_ACTIVITY_ID);
   let sent = 0;
   let autoOff = 0;
@@ -61,7 +64,7 @@ export async function tickReminders(options: {
 
       const message = await options.bot.api.sendMessage(
         user.chatId,
-        EYE_REST_MESSAGE,
+        pickCopy(),
         { reply_markup: reminderKeyboard() },
       );
       options.store.setLastFireIso(
