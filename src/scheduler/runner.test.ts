@@ -82,6 +82,13 @@ describe("Reminder runner", () => {
     expect(store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].lastFireIso).toBe(
       "2026-03-15T09:00:00.000Z",
     );
+    expect(
+      store.listReminderEvents(
+        1,
+        EYE_REST_ACTIVITY_ID,
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toEqual([{ fireIso: "2026-03-15T09:00:00.000Z", action: null }]);
   });
 
   it("attaches Done and Snooze and records latest Reminder message id", async () => {
@@ -203,5 +210,12 @@ describe("Reminder runner", () => {
     expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
     expect(user.timezone).toBe("UTC");
     expect(user.activeWindow).not.toBeNull();
+    expect(
+      store.listReminderEvents(
+        1,
+        EYE_REST_ACTIVITY_ID,
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toEqual([]);
   });
 });

@@ -70,6 +70,7 @@ WantedBy=multi-user.target
 |--------|---------|
 | `/start` | Setup or status |
 | `/status` | Current settings |
+| `/stats` | Reminder adherence stats |
 | `/on` / `/off` | Eye Rest on/off |
 | `/timezone [IANA]` | Set or pick timezone |
 | `/window [HH:MM HH:MM]` | Set or pick Active Window |

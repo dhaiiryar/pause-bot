@@ -61,6 +61,19 @@ export class UserStore {
         PRIMARY KEY (telegram_user_id, activity_id),
         FOREIGN KEY (telegram_user_id) REFERENCES users(telegram_user_id) ON DELETE CASCADE
       );
+
+      CREATE TABLE IF NOT EXISTS reminder_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_user_id INTEGER NOT NULL,
+        activity_id TEXT NOT NULL,
+        fire_iso TEXT NOT NULL,
+        action TEXT,
+        acted_at_iso TEXT,
+        FOREIGN KEY (telegram_user_id) REFERENCES users(telegram_user_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_reminder_events_user_activity
+        ON reminder_events(telegram_user_id, activity_id, fire_iso);
     `);
     this.ensureColumn("user_activities", "snooze_until_iso", "TEXT");
     this.ensureColumn(
@@ -288,6 +301,64 @@ export class UserStore {
          WHERE telegram_user_id = ? AND activity_id = ?`,
       )
       .run(messageId, telegramUserId, activityId);
+  }
+
+  recordReminderFired(
+    telegramUserId: number,
+    activityId: ActivityId,
+    fireIso: string,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO reminder_events
+           (telegram_user_id, activity_id, fire_iso, action, acted_at_iso)
+         VALUES (?, ?, ?, NULL, NULL)`,
+      )
+      .run(telegramUserId, activityId, fireIso);
+  }
+
+  recordReminderAction(
+    telegramUserId: number,
+    activityId: ActivityId,
+    fireIso: string,
+    action: "done" | "snoozed",
+    actedAtIso: string,
+  ): void {
+    const res = this.db
+      .prepare(
+        `UPDATE reminder_events SET action = ?, acted_at_iso = ?
+         WHERE telegram_user_id = ? AND activity_id = ? AND fire_iso = ?`,
+      )
+      .run(action, actedAtIso, telegramUserId, activityId, fireIso);
+    if (res.changes === 0) {
+      // Defensive: Reminder fired before this table existed.
+      this.db
+        .prepare(
+          `INSERT INTO reminder_events
+             (telegram_user_id, activity_id, fire_iso, action, acted_at_iso)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(telegramUserId, activityId, fireIso, action, actedAtIso);
+    }
+  }
+
+  listReminderEvents(
+    telegramUserId: number,
+    activityId: ActivityId,
+    sinceIso: string,
+  ): Array<{ fireIso: string; action: string | null }> {
+    return (
+      this.db
+        .prepare(
+          `SELECT fire_iso, action FROM reminder_events
+           WHERE telegram_user_id = ? AND activity_id = ? AND fire_iso >= ?
+           ORDER BY fire_iso`,
+        )
+        .all(telegramUserId, activityId, sinceIso) as Array<{
+        fire_iso: string;
+        action: string | null;
+      }>
+    ).map((r) => ({ fireIso: r.fire_iso, action: r.action }));
   }
 
   deleteUser(telegramUserId: number): void {

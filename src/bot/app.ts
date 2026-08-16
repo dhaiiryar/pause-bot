@@ -10,6 +10,10 @@ import {
   type ActivityId,
 } from "../domain/activities.js";
 import { snoozeTargetIso } from "../domain/schedule.js";
+import {
+  computeAdherenceStats,
+  type AdherenceStats,
+} from "../domain/stats.js";
 import type { UserRecord, UserStore } from "../store/user-store.js";
 
 export type ChatType = "private" | "group" | "supergroup" | "channel";
@@ -24,6 +28,7 @@ export type AppResult =
   | { kind: "status"; user: UserRecord }
   | { kind: "turned_on"; user: UserRecord }
   | { kind: "turned_off"; user: UserRecord }
+  | { kind: "stats"; user: UserRecord; stats: AdherenceStats }
   | { kind: "deleted" }
   | { kind: "need_setup" }
   | { kind: "error"; message: string };
@@ -120,6 +125,27 @@ export class BotApp {
     return { kind: "deleted" };
   }
 
+  stats(telegramUserId: number): AppResult {
+    const user = this.store.getUser(telegramUserId);
+    if (!user?.setupComplete || !user.timezone) return { kind: "need_setup" };
+    const since = this.now()
+      .toUTC()
+      .minus({ days: 8 })
+      .startOf("minute")
+      .toISO()!;
+    const events = this.store.listReminderEvents(
+      telegramUserId,
+      EYE_REST_ACTIVITY_ID,
+      since,
+    );
+    const stats = computeAdherenceStats({
+      events,
+      now: this.now(),
+      zone: user.timezone,
+    });
+    return { kind: "stats", user, stats };
+  }
+
   doneReminder(
     telegramUserId: number,
     activityId: ActivityId,
@@ -129,7 +155,10 @@ export class BotApp {
       telegramUserId,
       activityId,
       messageId,
-      () => ({ kind: "done", stripMessageId: messageId }),
+      (user) => {
+        this.recordReminderAction(user, activityId, "done");
+        return { kind: "done", stripMessageId: messageId };
+      },
     );
   }
 
@@ -158,6 +187,7 @@ export class BotApp {
             stripMessageId: messageId,
           };
         }
+        this.recordReminderAction(user, activityId, "snoozed");
         this.store.setSnoozeUntilIso(telegramUserId, activityId, target);
         return {
           kind: "snoozed",
@@ -166,6 +196,23 @@ export class BotApp {
         };
       },
     );
+  }
+
+  private recordReminderAction(
+    user: UserRecord,
+    activityId: ActivityId,
+    action: "done" | "snoozed",
+  ): void {
+    const activity = user.activities[activityId];
+    if (activity.lastFireIso) {
+      this.store.recordReminderAction(
+        user.telegramUserId,
+        activityId,
+        activity.lastFireIso,
+        action,
+        this.now().toUTC().toISO() ?? "",
+      );
+    }
   }
 
   private withLatestReminder(
@@ -189,6 +236,8 @@ export class BotApp {
     return act(user);
   }
 }
+
+export { formatAdherence } from "../domain/stats.js";
 
 export function formatStatus(user: UserRecord): string {
   const eye = user.activities[EYE_REST_ACTIVITY_ID];

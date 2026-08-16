@@ -2,6 +2,7 @@ import { Bot, type Context, type BotConfig } from "grammy";
 import type { BotCommand } from "grammy/types";
 import {
   BotApp,
+  formatAdherence,
   formatSetupComplete,
   formatStatus,
   type AppResult,
@@ -33,6 +34,7 @@ export type CreateBotOptions = BotConfig<Context> & {
 export const BOT_COMMANDS: readonly BotCommand[] = [
   { command: "start", description: "Setup or show status" },
   { command: "status", description: "Current settings" },
+  { command: "stats", description: "Your Eye Rest stats" },
   { command: "on", description: "Turn Eye Rest on" },
   { command: "off", description: "Turn Eye Rest off" },
   { command: "timezone", description: "Set or pick timezone" },
@@ -80,6 +82,12 @@ export function createBot(
     if (!(await ensurePrivate(ctx))) return;
     store.ensureUser(ctx.from!.id, ctx.chat!.id);
     await replyResult(ctx, app.turnOff(ctx.from!.id));
+  });
+
+  bot.command("stats", async (ctx) => {
+    if (!(await ensurePrivate(ctx))) return;
+    store.ensureUser(ctx.from!.id, ctx.chat!.id);
+    await replyResult(ctx, app.stats(ctx.from!.id));
   });
 
   bot.command("delete", async (ctx) => {
@@ -166,6 +174,9 @@ export function createBot(
         return;
       case "act:status":
         await replyResult(ctx, app.status(userId));
+        return;
+      case "act:stats":
+        await replyResult(ctx, app.stats(userId));
         return;
       case "act:window":
         await ctx.reply("Choose Active Window:", {
@@ -310,6 +321,13 @@ async function replyResult(ctx: Context, result: AppResult): Promise<void> {
       return;
     case "status":
       await ctx.reply(formatStatus(result.user), {
+        reply_markup: mainMenuKeyboard(
+          result.user.activities[EYE_REST_ACTIVITY_ID].on,
+        ),
+      });
+      return;
+    case "stats":
+      await ctx.reply(formatAdherence("Eye Rest", result.stats), {
         reply_markup: mainMenuKeyboard(
           result.user.activities[EYE_REST_ACTIVITY_ID].on,
         ),

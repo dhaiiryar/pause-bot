@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { DateTime } from "luxon";
 import { UserStore } from "../store/user-store.js";
 import { BotApp } from "./app.js";
 import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
@@ -14,7 +15,9 @@ describe("Bot app intents", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "pause-bot-app-"));
     store = UserStore.open(join(dir, "test.db"));
-    app = new BotApp(store);
+    app = new BotApp(store, () =>
+      DateTime.fromISO("2026-03-15T10:00:00", { zone: "utc" }),
+    );
   });
 
   afterEach(() => {
@@ -107,5 +110,75 @@ describe("Bot app intents", () => {
   it("status requires setup", () => {
     store.ensureUser(1, 10);
     expect(app.status(1).kind).toBe("need_setup");
+  });
+
+  it("records a Done action on the Reminder it answers", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLastFireIso(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:40:00.000Z");
+    store.setLatestReminderMessageId(1, EYE_REST_ACTIVITY_ID, 55);
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:40:00.000Z");
+    const result = app.doneReminder(1, EYE_REST_ACTIVITY_ID, 55);
+    expect(result.kind).toBe("done");
+    expect(
+      store.listReminderEvents(1, EYE_REST_ACTIVITY_ID, "2026-01-01T00:00:00.000Z"),
+    ).toEqual([{ fireIso: "2026-03-15T09:40:00.000Z", action: "done" }]);
+  });
+
+  it("records a Snoozed action on the Reminder it answers", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLastFireIso(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:40:00.000Z");
+    store.setLatestReminderMessageId(1, EYE_REST_ACTIVITY_ID, 55);
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:40:00.000Z");
+    const result = app.snoozeReminder(1, EYE_REST_ACTIVITY_ID, 55);
+    expect(result.kind).toBe("snoozed");
+    expect(
+      store.listReminderEvents(1, EYE_REST_ACTIVITY_ID, "2026-01-01T00:00:00.000Z"),
+    ).toEqual([{ fireIso: "2026-03-15T09:40:00.000Z", action: "snoozed" }]);
+  });
+
+  it("does not record an action when the Reminder is stale", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLastFireIso(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:40:00.000Z");
+    store.setLatestReminderMessageId(1, EYE_REST_ACTIVITY_ID, 99);
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:40:00.000Z");
+    expect(app.doneReminder(1, EYE_REST_ACTIVITY_ID, 55).kind).toBe("stale");
+    expect(
+      store.listReminderEvents(1, EYE_REST_ACTIVITY_ID, "2026-01-01T00:00:00.000Z"),
+    ).toEqual([{ fireIso: "2026-03-15T09:40:00.000Z", action: null }]);
+  });
+
+  it("serves stats for a set-up User", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:00:00.000Z");
+    store.recordReminderAction(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:00:00.000Z",
+      "done",
+      "2026-03-15T09:01:00.000Z",
+    );
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:40:00.000Z");
+    const result = app.stats(1);
+    expect(result.kind).toBe("stats");
+    if (result.kind === "stats") {
+      expect(result.stats.todayFires).toBe(2);
+      expect(result.stats.todayDone).toBe(1);
+      expect(result.stats.weekFires).toBe(2);
+      expect(result.stats.weekSnoozed).toBe(0);
+      expect(result.stats.streak).toBe(0);
+    }
+  });
+
+  it("stats requires setup", () => {
+    store.ensureUser(1, 10);
+    expect(app.stats(1).kind).toBe("need_setup");
   });
 });

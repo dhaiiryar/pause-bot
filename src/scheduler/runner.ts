@@ -69,6 +69,11 @@ export async function tickReminders(options: {
         EYE_REST_ACTIVITY_ID,
         due.fireIso,
       );
+      options.store.recordReminderFired(
+        user.telegramUserId,
+        EYE_REST_ACTIVITY_ID,
+        due.fireIso,
+      );
       options.store.setLatestReminderMessageId(
         user.telegramUserId,
         EYE_REST_ACTIVITY_ID,

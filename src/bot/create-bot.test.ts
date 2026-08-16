@@ -172,6 +172,33 @@ describe("Bot handlers (fake Telegram API)", () => {
     expect(lastText()).toMatch(/deleted/i);
   });
 
+  it("replies to /stats with adherence stats", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/stats"));
+    expect(lastText()).toMatch(/stats/i);
+    expect(lastText()).toMatch(/streak/i);
+  });
+
+  it("serves stats via the act:stats callback", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("act:stats"));
+    expect(lastText()).toMatch(/stats/i);
+    expect(lastText()).toMatch(/streak/i);
+  });
+
+  it("/stats before setup asks to finish setup", async () => {
+    store.ensureUser(1, 10);
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/stats"));
+    expect(lastText()).toMatch(/setup/i);
+  });
+
   it("Done on latest Reminder strips buttons and does not set Snooze", async () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "UTC");

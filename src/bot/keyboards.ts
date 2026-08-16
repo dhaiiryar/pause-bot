@@ -23,6 +23,7 @@ export function mainMenuKeyboard(eyeRestOn: boolean): InlineKeyboard {
   }
   kb.row();
   kb.text("Status", "act:status");
+  kb.text("Stats", "act:stats");
   kb.text("Change window", "act:window");
   kb.row();
   kb.text("Change timezone", "act:timezone");

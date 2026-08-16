@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
 import { UserStore } from "./user-store.js";
 import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
 
@@ -148,6 +149,82 @@ describe("User settings store", () => {
     expect(
       store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
     ).toBeNull();
+  });
+
+  it("round-trips Reminder events since a cutoff", () => {
+    store.ensureUser(1, 10);
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-09T09:00:00.000Z");
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:00:00.000Z");
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:20:00.000Z");
+    const events = store.listReminderEvents(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-10T00:00:00.000Z",
+    );
+    expect(events).toEqual([
+      { fireIso: "2026-03-15T09:00:00.000Z", action: null },
+      { fireIso: "2026-03-15T09:20:00.000Z", action: null },
+    ]);
+  });
+
+  it("records a Done action on the fired Reminder event", () => {
+    store.ensureUser(1, 10);
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:00:00.000Z");
+    store.recordReminderAction(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:00:00.000Z",
+      "done",
+      "2026-03-15T09:01:00.000Z",
+    );
+    expect(
+      store.listReminderEvents(1, EYE_REST_ACTIVITY_ID, "2026-01-01T00:00:00.000Z"),
+    ).toEqual([
+      { fireIso: "2026-03-15T09:00:00.000Z", action: "done" },
+    ]);
+    // listReminderEvents does not expose acted_at_iso; read the column directly.
+    const raw = new Database(join(dir, "test.db"), { readonly: true });
+    try {
+      const row = raw
+        .prepare(
+          `SELECT action, acted_at_iso FROM reminder_events WHERE fire_iso = ?`,
+        )
+        .get("2026-03-15T09:00:00.000Z") as {
+        action: string;
+        acted_at_iso: string;
+      };
+      expect(row.action).toBe("done");
+      expect(row.acted_at_iso).toBe("2026-03-15T09:01:00.000Z");
+    } finally {
+      raw.close();
+    }
+  });
+
+  it("still records an action when no fired row exists (pre-events Reminder)", () => {
+    store.ensureUser(1, 10);
+    store.recordReminderAction(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:00:00.000Z",
+      "snoozed",
+      "2026-03-15T09:01:00.000Z",
+    );
+    expect(
+      store.listReminderEvents(1, EYE_REST_ACTIVITY_ID, "2026-01-01T00:00:00.000Z"),
+    ).toEqual([
+      { fireIso: "2026-03-15T09:00:00.000Z", action: "snoozed" },
+    ]);
+  });
+
+  it("wipes Reminder events on delete via cascade", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:00:00.000Z");
+    store.deleteUser(1);
+    expect(
+      store.listReminderEvents(1, EYE_REST_ACTIVITY_ID, "2026-01-01T00:00:00.000Z"),
+    ).toEqual([]);
   });
 
   it("clears pending Snooze when Timezone changes", () => {
