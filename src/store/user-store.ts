@@ -1,7 +1,6 @@
 import Database from "better-sqlite3";
 import {
   type ActivityId,
-  EYE_REST_ACTIVITY_ID,
   defaultIntervalMinutes,
   ACTIVITY_IDS,
 } from "../domain/activities.js";
@@ -81,6 +80,24 @@ export class UserStore {
       "latest_reminder_message_id",
       "INTEGER",
     );
+    this.backfillActivities();
+  }
+
+  /** Rows for newly added Activities for pre-existing Users (off by default). */
+  private backfillActivities(): void {
+    const users = this.db
+      .prepare(`SELECT telegram_user_id FROM users`)
+      .all() as Array<{ telegram_user_id: number }>;
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO user_activities
+         (telegram_user_id, activity_id, is_on, interval_minutes)
+       VALUES (?, ?, 0, ?)`,
+    );
+    for (const u of users) {
+      for (const activityId of ACTIVITY_IDS) {
+        insert.run(u.telegram_user_id, activityId, defaultIntervalMinutes(activityId));
+      }
+    }
   }
 
   private ensureColumn(
@@ -233,13 +250,15 @@ export class UserStore {
       .run(telegramUserId);
   }
 
-  /** On first transition to setupComplete, turn Eye Rest on. Later config edits keep on/off. */
+  /** On first transition to setupComplete, turn all Activities on. Later config edits keep on/off. */
   private withSetupAutoOn(telegramUserId: number, mutate: () => void): void {
     const wasComplete = this.getUser(telegramUserId)?.setupComplete ?? false;
     mutate();
     const after = this.getUser(telegramUserId);
     if (!wasComplete && after?.setupComplete) {
-      this.setActivityOn(telegramUserId, EYE_REST_ACTIVITY_ID, true);
+      for (const activityId of ACTIVITY_IDS) {
+        this.setActivityOn(telegramUserId, activityId, true);
+      }
     }
   }
 

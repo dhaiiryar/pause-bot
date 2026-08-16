@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { DateTime } from "luxon";
 import { UserStore } from "../store/user-store.js";
 import { createBot, registerBotCommands, BOT_COMMANDS } from "./create-bot.js";
-import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
+import {
+  EYE_REST_ACTIVITY_ID,
+  STRETCH_ACTIVITY_ID,
+} from "../domain/activities.js";
 import { okResult, testBotInfo } from "../test/fake-telegram.js";
 
 type SentMessage = {
@@ -145,11 +148,12 @@ describe("Bot handlers (fake Telegram API)", () => {
     await bot.handleUpdate(callbackUpdate("tz:UTC"));
     expect(lastText()).toMatch(/Active Window/i);
     await bot.handleUpdate(callbackUpdate("win:09:00-18:00"));
-    expect(lastText()).toMatch(/Eye Rest is on/i);
+    expect(lastText()).toMatch(/activities are on/i);
     const user = store.getUser(1)!;
     expect(user.setupComplete).toBe(true);
     expect(user.timezone).toBe("UTC");
     expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(true);
   });
 
   it("turns off via /off", async () => {
@@ -211,7 +215,7 @@ describe("Bot handlers (fake Telegram API)", () => {
       inline_keyboard: Array<Array<{ callback_data: string }>>;
     };
     const datas = markup.inline_keyboard.flat().map((b) => b.callback_data);
-    expect(datas).toContain("ivl:20");
+    expect(datas).toContain("ivl:eye_rest:20");
   });
 
   it("/interval 30 persists the Interval and confirms it", async () => {
@@ -243,11 +247,104 @@ describe("Bot handlers (fake Telegram API)", () => {
     store.setTimezone(1, "UTC");
     store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
     const bot = botWithCapture();
-    await bot.handleUpdate(callbackUpdate("ivl:45"));
+    await bot.handleUpdate(callbackUpdate("ivl:eye_rest:45"));
     expect(
       store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
     ).toBe(45);
-    expect(lastText()).toMatch(/45 minutes/i);
+    expect(lastText()).toMatch(/Eye Rest interval set to 45 minutes/i);
+  });
+
+  it("/interval stretch 30 sets the Stretch Break Interval", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval stretch 30"));
+    expect(
+      store.getUser(1)?.activities[STRETCH_ACTIVITY_ID].intervalMinutes,
+    ).toBe(30);
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(20);
+    expect(lastText()).toMatch(/Stretch Break interval set to 30 minutes/i);
+  });
+
+  it("/interval stretch with no minutes offers the Stretch Break presets", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval stretch"));
+    const msg = [...sent].reverse().find((s) => s.method === "sendMessage");
+    const markup = msg?.payload["reply_markup"] as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const datas = markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(datas).toContain("ivl:stretch_break:60");
+  });
+
+  it("rejects an unknown /interval activity keyword", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval bogus 30"));
+    expect(lastText()).toMatch(/Unknown activity/i);
+  });
+
+  it("/off with no argument turns off every Activity", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/off"));
+    const user = store.getUser(1)!;
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(false);
+  });
+
+  it("/off stretch turns off only Stretch Break", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/off stretch"));
+    const user = store.getUser(1)!;
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
+  });
+
+  it("act:toggle:stretch_break toggles only Stretch Break", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("act:toggle:stretch_break"));
+    let user = store.getUser(1)!;
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
+    await bot.handleUpdate(callbackUpdate("act:toggle:stretch_break"));
+    user = store.getUser(1)!;
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(true);
+  });
+
+  it("Done on latest Stretch Break Reminder strips its buttons", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLatestReminderMessageId(1, STRETCH_ACTIVITY_ID, 66);
+    const bot = botWithCapture();
+    await bot.handleUpdate(
+      callbackUpdate("rem:done:stretch_break", 1, 10, 66),
+    );
+    const edit = sent.find((s) => s.method === "editMessageReplyMarkup");
+    expect(edit?.payload).toMatchObject({
+      chat_id: 10,
+      message_id: 66,
+      reply_markup: { inline_keyboard: [] },
+    });
+    const answered = sent.find((s) => s.method === "answerCallbackQuery");
+    expect(String(answered?.payload["text"] ?? "")).toMatch(/done/i);
   });
 
   it("/status shows the stored Interval, not the default constant", async () => {

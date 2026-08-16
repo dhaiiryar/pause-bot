@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { UserStore } from "./user-store.js";
-import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
+import {
+  ACTIVITY_IDS,
+  EYE_REST_ACTIVITY_ID,
+  STRETCH_ACTIVITY_ID,
+} from "../domain/activities.js";
 
 describe("User settings store", () => {
   let dir: string;
@@ -29,7 +33,18 @@ describe("User settings store", () => {
     expect(user.activeWindow).toBeNull();
   });
 
-  it("completes setup with Timezone and Active Window and turns Eye Rest on", () => {
+  it("seeds every Activity with its defaults on first touch", () => {
+    const user = store.ensureUser(42, 100);
+    expect(Object.keys(user.activities).sort()).toEqual(
+      [...ACTIVITY_IDS].sort(),
+    );
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[EYE_REST_ACTIVITY_ID].intervalMinutes).toBe(20);
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[STRETCH_ACTIVITY_ID].intervalMinutes).toBe(60);
+  });
+
+  it("completes setup with Timezone and Active Window and turns every Activity on", () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "Asia/Jakarta");
     store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
@@ -42,6 +57,36 @@ describe("User settings store", () => {
     });
     expect(user?.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
     expect(user?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes).toBe(20);
+    expect(user?.activities[STRETCH_ACTIVITY_ID].on).toBe(true);
+    expect(user?.activities[STRETCH_ACTIVITY_ID].intervalMinutes).toBe(60);
+  });
+
+  it("backfills an off row for an Activity added after the User existed", () => {
+    store.ensureUser(1, 10);
+    store.close();
+    // Simulate a pre-migration database: the new Activity has no row yet.
+    const external = new Database(join(dir, "test.db"));
+    external
+      .prepare(`DELETE FROM user_activities WHERE activity_id = ?`)
+      .run(STRETCH_ACTIVITY_ID);
+    external.close();
+    store = UserStore.open(join(dir, "test.db"));
+    const raw = new Database(join(dir, "test.db"), { readonly: true });
+    try {
+      const row = raw
+        .prepare(
+          `SELECT is_on, interval_minutes FROM user_activities
+           WHERE telegram_user_id = 1 AND activity_id = ?`,
+        )
+        .get(STRETCH_ACTIVITY_ID) as { is_on: number; interval_minutes: number };
+      expect(row.is_on).toBe(0);
+      expect(row.interval_minutes).toBe(60);
+    } finally {
+      raw.close();
+    }
+    // The backfilled row makes setActivityOn actually persist.
+    store.setActivityOn(1, STRETCH_ACTIVITY_ID, true);
+    expect(store.getUser(1)?.activities[STRETCH_ACTIVITY_ID].on).toBe(true);
   });
 
   it("persists a User-set Interval", () => {

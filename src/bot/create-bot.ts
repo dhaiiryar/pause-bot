@@ -5,11 +5,13 @@ import {
   formatAdherence,
   formatSetupComplete,
   formatStatus,
+  parseActivityScope,
   type AppResult,
   type Clock,
   type ReminderActionResult,
 } from "./app.js";
 import {
+  activityChooserKeyboard,
   deleteConfirmKeyboard,
   emptyReplyMarkup,
   intervalPresetsKeyboard,
@@ -19,7 +21,10 @@ import {
 } from "./keyboards.js";
 import type { UserStore } from "../store/user-store.js";
 import {
+  ACTIVITY_IDS,
+  ACTIVITY_LABELS,
   EYE_REST_ACTIVITY_ID,
+  isActivityId,
   type ActivityId,
 } from "../domain/activities.js";
 
@@ -35,12 +40,12 @@ export type CreateBotOptions = BotConfig<Context> & {
 export const BOT_COMMANDS: readonly BotCommand[] = [
   { command: "start", description: "Setup or show status" },
   { command: "status", description: "Current settings" },
-  { command: "stats", description: "Your Eye Rest stats" },
-  { command: "on", description: "Turn Eye Rest on" },
-  { command: "off", description: "Turn Eye Rest off" },
+  { command: "stats", description: "Your stats per Activity" },
+  { command: "on", description: "Turn activities on (all, or: eyes, stretch)" },
+  { command: "off", description: "Turn activities off (all, or: eyes, stretch)" },
   { command: "timezone", description: "Set or pick timezone" },
   { command: "window", description: "Set or pick Active Window" },
-  { command: "interval", description: "Set Eye Rest interval" },
+  { command: "interval", description: "Set an interval (eyes or stretch)" },
   { command: "delete", description: "Wipe all your data" },
 ];
 
@@ -77,13 +82,27 @@ export function createBot(
   bot.command("on", async (ctx) => {
     if (!(await ensurePrivate(ctx))) return;
     store.ensureUser(ctx.from!.id, ctx.chat!.id);
-    await replyResult(ctx, app.turnOn(ctx.from!.id));
+    const scope = parseActivityScope(ctx.match?.toString());
+    if (scope === null) {
+      await ctx.reply(
+        "Unknown activity. Use: eyes, stretch, or no argument for all.",
+      );
+      return;
+    }
+    await replyResult(ctx, app.turnOn(ctx.from!.id, scope));
   });
 
   bot.command("off", async (ctx) => {
     if (!(await ensurePrivate(ctx))) return;
     store.ensureUser(ctx.from!.id, ctx.chat!.id);
-    await replyResult(ctx, app.turnOff(ctx.from!.id));
+    const scope = parseActivityScope(ctx.match?.toString());
+    if (scope === null) {
+      await ctx.reply(
+        "Unknown activity. Use: eyes, stretch, or no argument for all.",
+      );
+      return;
+    }
+    await replyResult(ctx, app.turnOff(ctx.from!.id, scope));
   });
 
   bot.command("stats", async (ctx) => {
@@ -132,13 +151,33 @@ export function createBot(
   bot.command("interval", async (ctx) => {
     if (!(await ensurePrivate(ctx))) return;
     store.ensureUser(ctx.from!.id, ctx.chat!.id);
-    const arg = ctx.match?.toString().trim();
-    if (!arg) {
-      await replyIntervalPresets(ctx);
+    const parts = ctx.match?.toString().trim().split(/\s+/).filter(Boolean) ?? [];
+    if (parts.length === 0) {
+      await replyIntervalPresets(ctx, EYE_REST_ACTIVITY_ID);
       return;
     }
-    const minutes = Number(arg);
-    await replyResult(ctx, app.setInterval(ctx.from!.id, minutes));
+    const first = parts[0]!;
+    if (/^\d+$/.test(first)) {
+      // Keyword-less form keeps its plan-002 meaning: Eye Rest minutes.
+      await replyResult(
+        ctx,
+        app.setInterval(ctx.from!.id, Number(first), EYE_REST_ACTIVITY_ID),
+      );
+      return;
+    }
+    const scope = parseActivityScope(first);
+    if (scope === null || scope === "all") {
+      await ctx.reply("Unknown activity. Use: eyes, stretch.");
+      return;
+    }
+    if (parts.length === 1) {
+      await replyIntervalPresets(ctx, scope);
+      return;
+    }
+    await replyResult(
+      ctx,
+      app.setInterval(ctx.from!.id, Number(parts[1]), scope),
+    );
   });
 
   bot.on("callback_query:data", async (ctx) => {
@@ -179,19 +218,45 @@ export function createBot(
       return;
     }
 
+    if (data.startsWith("act:toggle:")) {
+      const id = data.slice("act:toggle:".length);
+      if (!isActivityId(id)) {
+        await ctx.reply("Unknown action. Try /status.");
+        return;
+      }
+      // Read the current state before mutating, else a second tap toggles back.
+      const isOn = store.getUser(userId)?.activities[id].on ?? false;
+      await replyResult(
+        ctx,
+        isOn ? app.turnOff(userId, id) : app.turnOn(userId, id),
+      );
+      return;
+    }
+
+    if (data.startsWith("act:interval:")) {
+      const id = data.slice("act:interval:".length);
+      if (!isActivityId(id)) {
+        await ctx.reply("Unknown action. Try /status.");
+        return;
+      }
+      await replyIntervalPresets(ctx, id);
+      return;
+    }
+
     if (data.startsWith("ivl:")) {
-      const minutes = Number(data.slice(4));
-      await replyResult(ctx, app.setInterval(userId, minutes));
+      const [, activityIdRaw, minutesRaw] = data.split(":");
+      if (activityIdRaw === undefined || !isActivityId(activityIdRaw)) {
+        await ctx.reply("Unknown action. Try /status.");
+        return;
+      }
+      await replyResult(
+        ctx,
+        app.setInterval(userId, Number(minutesRaw), activityIdRaw),
+      );
       return;
     }
 
     switch (data) {
-      case "act:on":
-        await replyResult(ctx, app.turnOn(userId));
-        return;
-      case "act:off":
-        await replyResult(ctx, app.turnOff(userId));
-        return;
       case "act:status":
         await replyResult(ctx, app.status(userId));
         return;
@@ -204,7 +269,9 @@ export function createBot(
         });
         return;
       case "act:interval":
-        await replyIntervalPresets(ctx);
+        await ctx.reply("Which Activity?", {
+          reply_markup: activityChooserKeyboard("act:interval:"),
+        });
         return;
       case "act:timezone":
         await ctx.reply("Pick your timezone:", {
@@ -240,8 +307,8 @@ async function handleReminderCallback(
   }
   const parts = data.split(":");
   const action = parts[1];
-  const activityId = parts[2] as ActivityId | undefined;
-  if (activityId !== EYE_REST_ACTIVITY_ID) {
+  const activityId = parts[2];
+  if (activityId === undefined || !isActivityId(activityId)) {
     await ctx.answerCallbackQuery({ text: "Unknown activity." });
     return;
   }
@@ -318,9 +385,12 @@ async function ensurePrivate(ctx: Context): Promise<boolean> {
   return false;
 }
 
-async function replyIntervalPresets(ctx: Context): Promise<void> {
-  await ctx.reply("Pick your Eye Rest interval:", {
-    reply_markup: intervalPresetsKeyboard(),
+async function replyIntervalPresets(
+  ctx: Context,
+  activityId: ActivityId,
+): Promise<void> {
+  await ctx.reply(`Pick your ${ACTIVITY_LABELS[activityId]} interval:`, {
+    reply_markup: intervalPresetsKeyboard(activityId),
   });
 }
 
@@ -343,44 +413,37 @@ async function replyResult(ctx: Context, result: AppResult): Promise<void> {
       return;
     case "setup_complete":
       await ctx.reply(formatSetupComplete(result.user), {
-        reply_markup: mainMenuKeyboard(
-          result.user.activities[EYE_REST_ACTIVITY_ID].on,
-        ),
+        reply_markup: mainMenuKeyboard(result.user.activities),
       });
       return;
     case "status":
       await ctx.reply(formatStatus(result.user), {
-        reply_markup: mainMenuKeyboard(
-          result.user.activities[EYE_REST_ACTIVITY_ID].on,
-        ),
+        reply_markup: mainMenuKeyboard(result.user.activities),
       });
       return;
     case "stats":
-      await ctx.reply(formatAdherence("Eye Rest", result.stats), {
-        reply_markup: mainMenuKeyboard(
-          result.user.activities[EYE_REST_ACTIVITY_ID].on,
-        ),
-      });
+      await ctx.reply(
+        ACTIVITY_IDS.map((id) =>
+          formatAdherence(ACTIVITY_LABELS[id], result.statsByActivity[id]),
+        ).join("\n\n"),
+        { reply_markup: mainMenuKeyboard(result.user.activities) },
+      );
       return;
     case "interval_set":
       await ctx.reply(
-        `Interval set to ${result.user.activities[EYE_REST_ACTIVITY_ID].intervalMinutes} minutes.\n` +
+        `${ACTIVITY_LABELS[result.activityId]} interval set to ${result.user.activities[result.activityId].intervalMinutes} minutes.\n` +
           formatStatus(result.user),
-        {
-          reply_markup: mainMenuKeyboard(
-            result.user.activities[EYE_REST_ACTIVITY_ID].on,
-          ),
-        },
+        { reply_markup: mainMenuKeyboard(result.user.activities) },
       );
       return;
     case "turned_on":
-      await ctx.reply("Eye Rest is on.\n" + formatStatus(result.user), {
-        reply_markup: mainMenuKeyboard(true),
+      await ctx.reply("Activities updated.\n" + formatStatus(result.user), {
+        reply_markup: mainMenuKeyboard(result.user.activities),
       });
       return;
     case "turned_off":
-      await ctx.reply("Eye Rest is off. Settings kept.\n" + formatStatus(result.user), {
-        reply_markup: mainMenuKeyboard(false),
+      await ctx.reply("Activities updated.\n" + formatStatus(result.user), {
+        reply_markup: mainMenuKeyboard(result.user.activities),
       });
       return;
     case "deleted":

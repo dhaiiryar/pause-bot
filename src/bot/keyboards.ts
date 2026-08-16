@@ -1,10 +1,14 @@
 import { InlineKeyboard } from "grammy";
 import { COMMON_TIMEZONES } from "./app.js";
 import {
+  ACTIVITY_IDS,
+  ACTIVITY_LABELS,
   EYE_REST_ACTIVITY_ID,
   EYE_REST_SNOOZE_MINUTES,
   VALID_INTERVAL_MINUTES,
+  type ActivityId,
 } from "../domain/activities.js";
+import type { ActivityState } from "../store/user-store.js";
 
 export function timezoneKeyboard(): InlineKeyboard {
   const kb = new InlineKeyboard();
@@ -15,20 +19,24 @@ export function timezoneKeyboard(): InlineKeyboard {
   return kb;
 }
 
-export function mainMenuKeyboard(eyeRestOn: boolean): InlineKeyboard {
+export function mainMenuKeyboard(
+  activities: Record<ActivityId, ActivityState>,
+): InlineKeyboard {
   const kb = new InlineKeyboard();
-  if (eyeRestOn) {
-    kb.text("Turn Eye Rest off", "act:off");
-  } else {
-    kb.text("Turn Eye Rest on", "act:on");
+  for (const id of ACTIVITY_IDS) {
+    const state = activities[id];
+    kb.text(
+      `${ACTIVITY_LABELS[id]}: ${state.on ? "on" : "off"}`,
+      `act:toggle:${id}`,
+    ).row();
   }
-  kb.row();
   kb.text("Status", "act:status");
   kb.text("Stats", "act:stats");
-  kb.text("Change window", "act:window");
-  kb.text("Interval", "act:interval");
   kb.row();
+  kb.text("Change window", "act:window");
   kb.text("Change timezone", "act:timezone");
+  kb.row();
+  kb.text("Interval", "act:interval");
   kb.text("Delete my data", "act:delete_confirm");
   return kb;
 }
@@ -52,21 +60,32 @@ export function windowPresetsKeyboard(): InlineKeyboard {
     .text("Custom: /window HH:MM HH:MM", "win:custom");
 }
 
-export function intervalPresetsKeyboard(): InlineKeyboard {
+export function intervalPresetsKeyboard(
+  activityId: ActivityId,
+): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const m of VALID_INTERVAL_MINUTES) {
-    kb.text(`${m} min`, `ivl:${m}`);
+    kb.text(`${m} min`, `ivl:${activityId}:${m}`);
   }
   return kb;
 }
 
-export function reminderKeyboard(): InlineKeyboard {
+/** Asks which Activity a scoped action (e.g. interval) applies to. */
+export function activityChooserKeyboard(prefix: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const id of ACTIVITY_IDS) {
+    kb.text(ACTIVITY_LABELS[id], `${prefix}${id}`).row();
+  }
+  return kb;
+}
+
+export function reminderKeyboard(activityId: ActivityId): InlineKeyboard {
+  const snooze = activityId === EYE_REST_ACTIVITY_ID
+    ? EYE_REST_SNOOZE_MINUTES
+    : 5;
   return new InlineKeyboard()
-    .text("Done", `rem:done:${EYE_REST_ACTIVITY_ID}`)
-    .text(
-      `Snooze ${EYE_REST_SNOOZE_MINUTES} min`,
-      `rem:snooze:${EYE_REST_ACTIVITY_ID}`,
-    );
+    .text("Done", `rem:done:${activityId}`)
+    .text(`Snooze ${snooze} min`, `rem:snooze:${activityId}`);
 }
 
 /** Telegram shape that removes inline buttons from a message. */

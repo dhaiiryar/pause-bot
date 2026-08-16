@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DateTime } from "luxon";
 import { UserStore } from "../store/user-store.js";
-import { BotApp } from "./app.js";
-import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
+import { BotApp, formatStatus, parseActivityScope } from "./app.js";
+import {
+  EYE_REST_ACTIVITY_ID,
+  STRETCH_ACTIVITY_ID,
+} from "../domain/activities.js";
 
 describe("Bot app intents", () => {
   let dir: string;
@@ -93,10 +96,53 @@ describe("Bot app intents", () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "UTC");
     store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
-    expect(app.turnOff(1).kind).toBe("turned_off");
+    expect(app.turnOff(1, EYE_REST_ACTIVITY_ID).kind).toBe("turned_off");
     expect(store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
-    expect(app.turnOn(1).kind).toBe("turned_on");
+    expect(app.turnOn(1, EYE_REST_ACTIVITY_ID).kind).toBe("turned_on");
     expect(store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
+  });
+
+  it("parses activity scope keywords", () => {
+    expect(parseActivityScope(undefined)).toBe("all");
+    expect(parseActivityScope("eyes")).toBe(EYE_REST_ACTIVITY_ID);
+    expect(parseActivityScope("eye")).toBe(EYE_REST_ACTIVITY_ID);
+    expect(parseActivityScope("stretch")).toBe(STRETCH_ACTIVITY_ID);
+    expect(parseActivityScope("bogus")).toBeNull();
+  });
+
+  it("turns on only the scoped Activity", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setActivityOn(1, EYE_REST_ACTIVITY_ID, false);
+    store.setActivityOn(1, STRETCH_ACTIVITY_ID, false);
+    expect(app.turnOn(1, STRETCH_ACTIVITY_ID).kind).toBe("turned_on");
+    const user = store.getUser(1)!;
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(true);
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
+  });
+
+  it("turns off all Activities with the all scope", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    expect(app.turnOff(1, "all").kind).toBe("turned_off");
+    const user = store.getUser(1)!;
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(false);
+  });
+
+  it("status lists every Activity label", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const result = app.status(1);
+    expect(result.kind).toBe("status");
+    if (result.kind === "status") {
+      const text = formatStatus(result.user);
+      expect(text).toMatch(/Eye Rest: (on|off) every \d+ minutes/);
+      expect(text).toMatch(/Stretch Break: (on|off) every \d+ minutes/);
+    }
   });
 
   it("wipes User on delete", () => {
@@ -116,7 +162,7 @@ describe("Bot app intents", () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "UTC");
     store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
-    const result = app.setInterval(1, 30);
+    const result = app.setInterval(1, 30, EYE_REST_ACTIVITY_ID);
     expect(result.kind).toBe("interval_set");
     if (result.kind === "interval_set") {
       expect(result.user.activities[EYE_REST_ACTIVITY_ID].intervalMinutes).toBe(30);
@@ -131,7 +177,7 @@ describe("Bot app intents", () => {
     store.setTimezone(1, "UTC");
     store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
     for (const bad of [0, -1, 90]) {
-      const result = app.setInterval(1, bad);
+      const result = app.setInterval(1, bad, EYE_REST_ACTIVITY_ID);
       expect(result.kind).toBe("error");
       if (result.kind === "error") {
         expect(result.message).toMatch(/10, 15, 20, 30, 45, 60/);
@@ -144,7 +190,7 @@ describe("Bot app intents", () => {
 
   it("interval change requires setup", () => {
     store.ensureUser(1, 10);
-    expect(app.setInterval(1, 30).kind).toBe("need_setup");
+    expect(app.setInterval(1, 30, EYE_REST_ACTIVITY_ID).kind).toBe("need_setup");
   });
 
   it("keeps a pending Snooze and last fire across an Interval change", () => {
@@ -157,7 +203,9 @@ describe("Bot app intents", () => {
       EYE_REST_ACTIVITY_ID,
       "2026-03-15T09:45:00.000Z",
     );
-    expect(app.setInterval(1, 45).kind).toBe("interval_set");
+    expect(app.setInterval(1, 45, EYE_REST_ACTIVITY_ID).kind).toBe(
+      "interval_set",
+    );
     const activity = store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID];
     expect(activity.intervalMinutes).toBe(45);
     expect(activity.lastFireIso).toBe("2026-03-15T09:40:00.000Z");
@@ -221,11 +269,13 @@ describe("Bot app intents", () => {
     const result = app.stats(1);
     expect(result.kind).toBe("stats");
     if (result.kind === "stats") {
-      expect(result.stats.todayFires).toBe(2);
-      expect(result.stats.todayDone).toBe(1);
-      expect(result.stats.weekFires).toBe(2);
-      expect(result.stats.weekSnoozed).toBe(0);
-      expect(result.stats.streak).toBe(0);
+      const stats = result.statsByActivity[EYE_REST_ACTIVITY_ID];
+      expect(stats.todayFires).toBe(2);
+      expect(stats.todayDone).toBe(1);
+      expect(stats.weekFires).toBe(2);
+      expect(stats.weekSnoozed).toBe(0);
+      expect(stats.streak).toBe(0);
+      expect(result.statsByActivity[STRETCH_ACTIVITY_ID].weekFires).toBe(0);
     }
   });
 

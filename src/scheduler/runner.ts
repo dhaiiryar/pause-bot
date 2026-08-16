@@ -2,7 +2,7 @@ import { DateTime } from "luxon";
 import type { Bot } from "grammy";
 import { GrammyError } from "grammy";
 import {
-  EYE_REST_ACTIVITY_ID,
+  ACTIVITY_IDS,
   defaultReminderCopyPicker,
   type ReminderCopyPicker,
 } from "../domain/activities.js";
@@ -24,75 +24,68 @@ export async function tickReminders(options: {
 }): Promise<{ sent: number; autoOff: number }> {
   const now = (options.now ?? (() => DateTime.utc()))();
   const pickCopy = options.pickCopy ?? defaultReminderCopyPicker;
-  const users = options.store.listSchedulable(EYE_REST_ACTIVITY_ID);
   let sent = 0;
   let autoOff = 0;
 
-  for (const user of users) {
-    if (!user.timezone || !user.activeWindow) continue;
-    const activity = user.activities[EYE_REST_ACTIVITY_ID];
-    const due = reminderDueAt({
-      now,
-      window: user.activeWindow,
-      intervalMinutes: activity.intervalMinutes,
-      zone: user.timezone,
-      snoozeUntilIso: activity.snoozeUntilIso,
-      lastFireIso: activity.lastFireIso,
-    });
+  for (const activityId of ACTIVITY_IDS) {
+    for (const user of options.store.listSchedulable(activityId)) {
+      if (!user.timezone || !user.activeWindow) continue;
+      const activity = user.activities[activityId];
+      const due = reminderDueAt({
+        now,
+        window: user.activeWindow,
+        intervalMinutes: activity.intervalMinutes,
+        zone: user.timezone,
+        snoozeUntilIso: activity.snoozeUntilIso,
+        lastFireIso: activity.lastFireIso,
+      });
 
-    if (due.clearSnooze && activity.snoozeUntilIso) {
-      options.store.setSnoozeUntilIso(
-        user.telegramUserId,
-        EYE_REST_ACTIVITY_ID,
-        null,
-      );
-    }
-    if (!due.due) continue;
+      if (due.clearSnooze && activity.snoozeUntilIso) {
+        options.store.setSnoozeUntilIso(user.telegramUserId, activityId, null);
+      }
+      if (!due.due) continue;
 
-    try {
-      if (activity.latestReminderMessageId != null) {
-        try {
-          await options.bot.api.editMessageReplyMarkup(
-            user.chatId,
-            activity.latestReminderMessageId,
-            { reply_markup: emptyReplyMarkup() },
-          );
-        } catch {
-          // best-effort strip of superseded Reminder buttons
+      try {
+        if (activity.latestReminderMessageId != null) {
+          try {
+            await options.bot.api.editMessageReplyMarkup(
+              user.chatId,
+              activity.latestReminderMessageId,
+              { reply_markup: emptyReplyMarkup() },
+            );
+          } catch {
+            // best-effort strip of superseded Reminder buttons
+          }
         }
-      }
 
-      const message = await options.bot.api.sendMessage(
-        user.chatId,
-        pickCopy(),
-        { reply_markup: reminderKeyboard() },
-      );
-      options.store.setLastFireIso(
-        user.telegramUserId,
-        EYE_REST_ACTIVITY_ID,
-        due.fireIso,
-      );
-      options.store.recordReminderFired(
-        user.telegramUserId,
-        EYE_REST_ACTIVITY_ID,
-        due.fireIso,
-      );
-      options.store.setLatestReminderMessageId(
-        user.telegramUserId,
-        EYE_REST_ACTIVITY_ID,
-        message.message_id,
-      );
-      sent += 1;
-    } catch (err) {
-      if (isPermanentFromUnknown(err)) {
-        options.store.setActivityOn(
-          user.telegramUserId,
-          EYE_REST_ACTIVITY_ID,
-          false,
+        const message = await options.bot.api.sendMessage(
+          user.chatId,
+          pickCopy(activityId),
+          { reply_markup: reminderKeyboard(activityId) },
         );
-        autoOff += 1;
+        options.store.setLastFireIso(
+          user.telegramUserId,
+          activityId,
+          due.fireIso,
+        );
+        options.store.recordReminderFired(
+          user.telegramUserId,
+          activityId,
+          due.fireIso,
+        );
+        options.store.setLatestReminderMessageId(
+          user.telegramUserId,
+          activityId,
+          message.message_id,
+        );
+        sent += 1;
+      } catch (err) {
+        if (isPermanentFromUnknown(err)) {
+          options.store.setActivityOn(user.telegramUserId, activityId, false);
+          autoOff += 1;
+        }
+        // transient: leave on, try next tick
       }
-      // transient: leave on, try next tick
     }
   }
 

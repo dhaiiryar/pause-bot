@@ -10,6 +10,8 @@ import {
   EYE_REST_ACTIVITY_ID,
   EYE_REST_MESSAGE,
   EYE_REST_MESSAGES,
+  STRETCH_ACTIVITY_ID,
+  STRETCH_MESSAGES,
 } from "../domain/activities.js";
 import { okResult, testBotInfo } from "../test/fake-telegram.js";
 
@@ -31,6 +33,8 @@ describe("Reminder runner", () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "UTC");
     store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    // Setup auto-ons every Activity; Eye Rest tests want Eye Rest only.
+    store.setActivityOn(1, STRETCH_ACTIVITY_ID, false);
   }
 
   function botThatSends(
@@ -84,7 +88,7 @@ describe("Reminder runner", () => {
       store,
       bot,
       now: () => now,
-      pickCopy: () => EYE_REST_MESSAGE,
+      pickCopy: (_activityId) => EYE_REST_MESSAGE,
     });
     expect(result.sent).toBe(1);
     expect(messages[0]).toEqual({ chatId: 10, text: EYE_REST_MESSAGE });
@@ -100,6 +104,26 @@ describe("Reminder runner", () => {
     ).toEqual([{ fireIso: "2026-03-15T09:00:00.000Z", action: null }]);
   });
 
+  it("sends one Reminder per due Activity when both are on", async () => {
+    setupUser();
+    store.setActivityOn(1, STRETCH_ACTIVITY_ID, true);
+    const messages: string[] = [];
+    const bot = botThatSends((_c, text) => messages.push(text));
+    const now = DateTime.fromISO("2026-03-15T10:00:00", { zone: "UTC" });
+    const result = await tickReminders({ store, bot, now: () => now });
+    expect(result.sent).toBe(2);
+    expect(
+      messages.filter((m) => (EYE_REST_MESSAGES as readonly string[]).includes(m)),
+    ).toHaveLength(1);
+    expect(
+      messages.filter((m) => (STRETCH_MESSAGES as readonly string[]).includes(m)),
+    ).toHaveLength(1);
+    expect(
+      store.getUser(1)?.activities[STRETCH_ACTIVITY_ID]
+        .latestReminderMessageId,
+    ).toBe(2);
+  });
+
   it("uses the injected copy picker for the Reminder text", async () => {
     setupUser();
     const messages: string[] = [];
@@ -109,7 +133,7 @@ describe("Reminder runner", () => {
       store,
       bot,
       now: () => now,
-      pickCopy: () => EYE_REST_MESSAGES[3]!,
+      pickCopy: (_activityId) => EYE_REST_MESSAGES[3]!,
     });
     expect(messages[0]).toBe(EYE_REST_MESSAGES[3]);
   });
