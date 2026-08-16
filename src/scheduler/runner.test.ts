@@ -237,6 +237,39 @@ describe("Reminder runner", () => {
     expect(count).toBe(0);
   });
 
+  it("applies the weekend window on a Saturday", async () => {
+    setupUser();
+    store.setWeekendWindow(1, { startMinutes: 10 * 60, endMinutes: 14 * 60 });
+    let count = 0;
+    const bot = botThatSends(() => {
+      count += 1;
+    });
+
+    // 2026-03-14 is a Saturday (luxon weekday 6): 09:00 is inside the
+    // weekday window but not the weekend one.
+    const satNine = DateTime.fromISO("2026-03-14T09:00:00", { zone: "UTC" });
+    expect(satNine.weekday).toBe(6);
+    expect((await tickReminders({ store, bot, now: () => satNine })).sent).toBe(0);
+
+    const satTen = DateTime.fromISO("2026-03-14T10:00:00", { zone: "UTC" });
+    expect((await tickReminders({ store, bot, now: () => satTen })).sent).toBe(1);
+    expect(count).toBe(1);
+  });
+
+  it("applies the weekday window on a Monday", async () => {
+    setupUser();
+    store.setWeekendWindow(1, { startMinutes: 10 * 60, endMinutes: 14 * 60 });
+    let count = 0;
+    const bot = botThatSends(() => {
+      count += 1;
+    });
+    // 2026-03-16 is a Monday: the weekday window 09:00–18:00 applies again.
+    const monNine = DateTime.fromISO("2026-03-16T09:00:00", { zone: "UTC" });
+    expect(monNine.weekday).toBe(1);
+    expect((await tickReminders({ store, bot, now: () => monNine })).sent).toBe(1);
+    expect(count).toBe(1);
+  });
+
   it("auto-offs on permanent delivery failure and keeps settings", async () => {
     setupUser();
     const err = new GrammyError(

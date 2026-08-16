@@ -142,18 +142,80 @@ describe("Bot handlers (fake Telegram API)", () => {
     expect(store.getUser(1)).not.toBeNull();
   });
 
-  it("completes setup via timezone callback and window preset", async () => {
+  it("completes setup via timezone callback, window preset, and weekend answer", async () => {
     const bot = botWithCapture();
     await bot.handleUpdate(privateUpdate("/start"));
     await bot.handleUpdate(callbackUpdate("tz:UTC"));
     expect(lastText()).toMatch(/Active Window/i);
     await bot.handleUpdate(callbackUpdate("win:09:00-18:00"));
+    expect(lastText()).toMatch(/weekend Active Window/i);
+    await bot.handleUpdate(callbackUpdate("win:wkd:same"));
     expect(lastText()).toMatch(/activities are on/i);
     const user = store.getUser(1)!;
     expect(user.setupComplete).toBe(true);
     expect(user.timezone).toBe("UTC");
+    expect(user.weekendWindowSet).toBe(true);
+    expect(user.weekendActiveWindow).toBeNull();
     expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
     expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(true);
+  });
+
+  it("/weekend 10:00 14:00 persists the weekend window", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setWeekendWindow(1, "same");
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/weekend 10:00 14:00"));
+    const user = store.getUser(1)!;
+    expect(user.weekendActiveWindow).toEqual({
+      startMinutes: 10 * 60,
+      endMinutes: 14 * 60,
+    });
+    expect(user.weekendWindowSet).toBe(true);
+    expect(lastText()).toMatch(/Weekend: 10:00–14:00/);
+  });
+
+  it("win:wkd:same callback persists the answered flag", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("win:wkd:same"));
+    const user = store.getUser(1)!;
+    expect(user.weekendWindowSet).toBe(true);
+    expect(user.weekendActiveWindow).toBeNull();
+  });
+
+  it("win:wkd:off callback persists the zero-length sentinel window", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("win:wkd:off"));
+    const user = store.getUser(1)!;
+    expect(user.weekendActiveWindow).toEqual({
+      startMinutes: 0,
+      endMinutes: 0,
+    });
+    expect(user.weekendWindowSet).toBe(true);
+  });
+
+  it("/weekend with no arg replies with the weekend presets keyboard", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/weekend"));
+    expect(lastText()).toMatch(/weekend Active Window/i);
+    const msg = [...sent].reverse().find((s) => s.method === "sendMessage");
+    const markup = msg?.payload["reply_markup"] as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const datas = markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(datas).toContain("win:wkd:same");
+    expect(datas).toContain("win:wkd:off");
+    expect(datas).toContain("win:wkd:10:00-18:00");
   });
 
   it("turns off via /off", async () => {

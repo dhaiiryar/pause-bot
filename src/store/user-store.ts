@@ -19,6 +19,10 @@ export type UserRecord = {
   chatId: number;
   timezone: string | null;
   activeWindow: ActiveWindow | null;
+  /** Weekend Active Window; null = same as weekdays. */
+  weekendActiveWindow: ActiveWindow | null;
+  /** Whether the User answered the weekend-window question. */
+  weekendWindowSet: boolean;
   setupComplete: boolean;
   activities: Record<ActivityId, ActivityState>;
 };
@@ -79,6 +83,13 @@ export class UserStore {
       "user_activities",
       "latest_reminder_message_id",
       "INTEGER",
+    );
+    this.ensureColumn("users", "weekend_window_start_minutes", "INTEGER");
+    this.ensureColumn("users", "weekend_window_end_minutes", "INTEGER");
+    this.ensureColumn(
+      "users",
+      "weekend_window_set",
+      "INTEGER NOT NULL DEFAULT 0",
     );
     this.backfillActivities();
   }
@@ -147,7 +158,8 @@ export class UserStore {
   getUser(telegramUserId: number): UserRecord | null {
     const row = this.db
       .prepare(
-        `SELECT telegram_user_id, chat_id, timezone, window_start_minutes, window_end_minutes
+        `SELECT telegram_user_id, chat_id, timezone, window_start_minutes, window_end_minutes,
+                weekend_window_start_minutes, weekend_window_end_minutes, weekend_window_set
          FROM users WHERE telegram_user_id = ?`,
       )
       .get(telegramUserId) as
@@ -157,6 +169,9 @@ export class UserStore {
           timezone: string | null;
           window_start_minutes: number | null;
           window_end_minutes: number | null;
+          weekend_window_start_minutes: number | null;
+          weekend_window_end_minutes: number | null;
+          weekend_window_set: number;
         }
       | undefined;
 
@@ -208,6 +223,15 @@ export class UserStore {
           }
         : null;
 
+    const weekendActiveWindow =
+      row.weekend_window_start_minutes !== null &&
+      row.weekend_window_end_minutes !== null
+        ? {
+            startMinutes: row.weekend_window_start_minutes,
+            endMinutes: row.weekend_window_end_minutes,
+          }
+        : null;
+
     const setupComplete = row.timezone !== null && activeWindow !== null;
 
     return {
@@ -215,6 +239,8 @@ export class UserStore {
       chatId: row.chat_id,
       timezone: row.timezone,
       activeWindow,
+      weekendActiveWindow,
+      weekendWindowSet: row.weekend_window_set === 1,
       setupComplete,
       activities,
     };
@@ -237,6 +263,34 @@ export class UserStore {
            WHERE telegram_user_id = ?`,
         )
         .run(window.startMinutes, window.endMinutes, telegramUserId);
+      this.clearAllSnoozes(telegramUserId);
+    });
+  }
+
+  setWeekendWindow(
+    telegramUserId: number,
+    weekend: ActiveWindow | "same",
+  ): void {
+    this.withSetupAutoOn(telegramUserId, () => {
+      if (weekend === "same") {
+        this.db
+          .prepare(
+            `UPDATE users SET weekend_window_start_minutes = NULL,
+                             weekend_window_end_minutes = NULL,
+                             weekend_window_set = 1
+             WHERE telegram_user_id = ?`,
+          )
+          .run(telegramUserId);
+      } else {
+        this.db
+          .prepare(
+            `UPDATE users SET weekend_window_start_minutes = ?,
+                             weekend_window_end_minutes = ?,
+                             weekend_window_set = 1
+             WHERE telegram_user_id = ?`,
+          )
+          .run(weekend.startMinutes, weekend.endMinutes, telegramUserId);
+      }
       this.clearAllSnoozes(telegramUserId);
     });
   }

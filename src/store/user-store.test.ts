@@ -206,6 +206,75 @@ describe("User settings store", () => {
     ).toBeNull();
   });
 
+  it("round-trips a weekend Active Window and flips weekendWindowSet", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    let user = store.getUser(1)!;
+    expect(user.weekendActiveWindow).toBeNull();
+    expect(user.weekendWindowSet).toBe(false);
+
+    store.setWeekendWindow(1, { startMinutes: 10 * 60, endMinutes: 14 * 60 });
+    user = store.getUser(1)!;
+    expect(user.weekendActiveWindow).toEqual({
+      startMinutes: 10 * 60,
+      endMinutes: 14 * 60,
+    });
+    expect(user.weekendWindowSet).toBe(true);
+
+    // "same" records the answer but clears the stored window.
+    store.setWeekendWindow(1, "same");
+    user = store.getUser(1)!;
+    expect(user.weekendActiveWindow).toBeNull();
+    expect(user.weekendWindowSet).toBe(true);
+  });
+
+  it("clears pending Snooze when the weekend window changes", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setSnoozeUntilIso(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:25:00.000Z",
+    );
+    store.setWeekendWindow(1, { startMinutes: 10 * 60, endMinutes: 14 * 60 });
+    expect(
+      store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID].snoozeUntilIso,
+    ).toBeNull();
+  });
+
+  it("migrates a pre-weekend database with the weekend window unset", () => {
+    // Simulate a pre-005 database: users table without the weekend columns.
+    const external = new Database(join(dir, "old.db"));
+    external.exec(`
+      CREATE TABLE users (
+        telegram_user_id INTEGER PRIMARY KEY,
+        chat_id INTEGER NOT NULL,
+        timezone TEXT,
+        window_start_minutes INTEGER,
+        window_end_minutes INTEGER
+      );
+      INSERT INTO users (telegram_user_id, chat_id, timezone, window_start_minutes, window_end_minutes)
+      VALUES (1, 10, 'UTC', 540, 1080);
+    `);
+    external.close();
+
+    const reopened = UserStore.open(join(dir, "old.db"));
+    try {
+      const user = reopened.getUser(1)!;
+      expect(user.setupComplete).toBe(true);
+      expect(user.activeWindow).toEqual({
+        startMinutes: 9 * 60,
+        endMinutes: 18 * 60,
+      });
+      expect(user.weekendActiveWindow).toBeNull();
+      expect(user.weekendWindowSet).toBe(false);
+    } finally {
+      reopened.close();
+    }
+  });
+
   it("round-trips Reminder events since a cutoff", () => {
     store.ensureUser(1, 10);
     store.recordReminderFired(1, EYE_REST_ACTIVITY_ID, "2026-03-09T09:00:00.000Z");

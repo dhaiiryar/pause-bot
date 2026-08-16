@@ -60,6 +60,19 @@ export function windowPresetsKeyboard(): InlineKeyboard {
     .text("Custom: /window HH:MM HH:MM", "win:custom");
 }
 
+export function weekendWindowPresetsKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Same as weekdays", "win:wkd:same")
+    .row()
+    .text("10:00–18:00", "win:wkd:10:00-18:00")
+    .row()
+    .text("09:00–13:00", "win:wkd:09:00-13:00")
+    .row()
+    .text("Off on weekends", "win:wkd:off")
+    .row()
+    .text("Custom: /weekend HH:MM HH:MM", "win:wkd:custom");
+}
+
 export function intervalPresetsKeyboard(
   activityId: ActivityId,
 ): InlineKeyboard {

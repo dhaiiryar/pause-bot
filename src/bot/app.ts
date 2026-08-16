@@ -1,5 +1,6 @@
 import { DateTime, IANAZone } from "luxon";
 import {
+  type ActiveWindow,
   parseActiveWindow,
   formatMinutes,
 } from "../domain/active-window.js";
@@ -28,6 +29,7 @@ export type AppResult =
   | { kind: "private_only" }
   | { kind: "setup_timezone" }
   | { kind: "setup_window" }
+  | { kind: "setup_weekend" }
   | { kind: "setup_complete"; user: UserRecord }
   | { kind: "status"; user: UserRecord }
   | { kind: "turned_on"; user: UserRecord }
@@ -101,12 +103,43 @@ export class BotApp {
     this.store.setActiveWindow(telegramUserId, parsed.window);
     const user = this.store.getUser(telegramUserId)!;
     if (!wasComplete && user.setupComplete) {
+      if (!user.weekendWindowSet) {
+        return { kind: "setup_weekend" };
+      }
       return { kind: "setup_complete", user };
     }
     if (!user.setupComplete) {
       return { kind: "setup_timezone" };
     }
     return { kind: "status", user };
+  }
+
+  setWeekendWindow(
+    telegramUserId: number,
+    weekend: ActiveWindow | "same",
+  ): AppResult {
+    const before = this.store.getUser(telegramUserId);
+    if (!before?.setupComplete) {
+      return { kind: "need_setup" };
+    }
+    this.store.setWeekendWindow(telegramUserId, weekend);
+    const user = this.store.getUser(telegramUserId)!;
+    if (!before.weekendWindowSet) {
+      return { kind: "setup_complete", user };
+    }
+    return { kind: "status", user };
+  }
+
+  setWeekendWindowStrings(
+    telegramUserId: number,
+    start: string,
+    end: string,
+  ): AppResult {
+    const parsed = parseActiveWindow(start, end);
+    if (!parsed.ok) {
+      return { kind: "error", message: parsed.error };
+    }
+    return this.setWeekendWindow(telegramUserId, parsed.window);
   }
 
   status(telegramUserId: number): AppResult {
@@ -217,6 +250,7 @@ export class BotApp {
           now: this.now(),
           snoozeMinutes: EYE_REST_SNOOZE_MINUTES,
           window: user.activeWindow,
+          weekendWindow: user.weekendActiveWindow,
           zone: user.timezone,
         });
         if (!target) {
@@ -281,6 +315,14 @@ export function formatStatus(user: UserRecord): string {
   const window =
     user.activeWindow &&
     `${formatMinutes(user.activeWindow.startMinutes)}–${formatMinutes(user.activeWindow.endMinutes)}`;
+  const weekend = user.weekendActiveWindow;
+  const weekendLine = `Weekend: ${
+    weekend === null
+      ? "same as weekdays"
+      : weekend.startMinutes === 0 && weekend.endMinutes === 0
+        ? "off"
+        : `${formatMinutes(weekend.startMinutes)}–${formatMinutes(weekend.endMinutes)}`
+  }`;
   const activityLines = ACTIVITY_IDS.map(
     (id) =>
       `${ACTIVITY_LABELS[id]}: ${user.activities[id].on ? "on" : "off"} every ${user.activities[id].intervalMinutes} minutes`,
@@ -288,7 +330,8 @@ export function formatStatus(user: UserRecord): string {
   return [
     "Pause Bot status",
     `Timezone: ${user.timezone}`,
-    `Active Window: ${window} (every day)`,
+    `Active Window: ${window} (Mon–Fri)`,
+    weekendLine,
     ...activityLines,
   ].join("\n");
 }

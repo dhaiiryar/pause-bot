@@ -76,13 +76,65 @@ describe("Bot app intents", () => {
     expect(result.kind).toBe("error");
   });
 
-  it("completes setup with valid Active Window", () => {
+  it("asks the weekend question after the first weekday window, then completes", () => {
     store.ensureUser(1, 10);
     app.setTimezone(1, "UTC");
-    const result = app.setActiveWindow(1, "09:00", "18:00");
-    expect(result.kind).toBe("setup_complete");
-    expect(store.getUser(1)?.setupComplete).toBe(true);
+    expect(app.setActiveWindow(1, "09:00", "18:00").kind).toBe("setup_weekend");
+    // Setup already completed (auto-on) at the weekday-window step.
     expect(store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
+    expect(app.setWeekendWindow(1, "same").kind).toBe("setup_complete");
+    expect(store.getUser(1)?.weekendWindowSet).toBe(true);
+  });
+
+  it("later weekday-window changes return status, not the weekend question", () => {
+    store.ensureUser(1, 10);
+    app.setTimezone(1, "UTC");
+    app.setActiveWindow(1, "09:00", "18:00");
+    app.setWeekendWindow(1, "same");
+    const result = app.setActiveWindow(1, "10:00", "16:00");
+    expect(result.kind).toBe("status");
+  });
+
+  it("setWeekendWindow requires setup", () => {
+    store.ensureUser(1, 10);
+    expect(app.setWeekendWindow(1, "same").kind).toBe("need_setup");
+  });
+
+  it("setWeekendWindowStrings rejects invalid windows", () => {
+    store.ensureUser(1, 10);
+    app.setTimezone(1, "UTC");
+    app.setActiveWindow(1, "09:00", "18:00");
+    expect(app.setWeekendWindowStrings(1, "22:00", "06:00").kind).toBe(
+      "error",
+    );
+    // First valid answer completes the weekend step; later ones are status.
+    expect(app.setWeekendWindowStrings(1, "10:00", "14:00").kind).toBe(
+      "setup_complete",
+    );
+    expect(app.setWeekendWindowStrings(1, "11:00", "15:00").kind).toBe(
+      "status",
+    );
+    expect(store.getUser(1)?.weekendActiveWindow).toEqual({
+      startMinutes: 11 * 60,
+      endMinutes: 15 * 60,
+    });
+  });
+
+  it("formatStatus shows the weekend line: same as weekdays, real hours, then off", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    expect(formatStatus(store.getUser(1)!)).toMatch(
+      /Weekend: same as weekdays/,
+    );
+    store.setWeekendWindow(1, { startMinutes: 10 * 60, endMinutes: 14 * 60 });
+    expect(formatStatus(store.getUser(1)!)).toMatch(/Weekend: 10:00–14:00/);
+    store.setWeekendWindow(1, "same");
+    expect(formatStatus(store.getUser(1)!)).toMatch(
+      /Weekend: same as weekdays/,
+    );
+    store.setWeekendWindow(1, { startMinutes: 0, endMinutes: 0 });
+    expect(formatStatus(store.getUser(1)!)).toMatch(/Weekend: off/);
   });
 
   it("rejects overnight Active Window", () => {

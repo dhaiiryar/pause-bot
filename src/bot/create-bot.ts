@@ -17,9 +17,11 @@ import {
   intervalPresetsKeyboard,
   mainMenuKeyboard,
   timezoneKeyboard,
+  weekendWindowPresetsKeyboard,
   windowPresetsKeyboard,
 } from "./keyboards.js";
 import type { UserStore } from "../store/user-store.js";
+import { NO_WINDOW } from "../domain/active-window.js";
 import {
   ACTIVITY_IDS,
   ACTIVITY_LABELS,
@@ -45,6 +47,7 @@ export const BOT_COMMANDS: readonly BotCommand[] = [
   { command: "off", description: "Turn activities off (all, or: eyes, stretch)" },
   { command: "timezone", description: "Set or pick timezone" },
   { command: "window", description: "Set or pick Active Window" },
+  { command: "weekend", description: "Set weekend window" },
   { command: "interval", description: "Set an interval (eyes or stretch)" },
   { command: "delete", description: "Wipe all your data" },
 ];
@@ -148,6 +151,33 @@ export function createBot(
     );
   });
 
+  bot.command("weekend", async (ctx) => {
+    if (!(await ensurePrivate(ctx))) return;
+    store.ensureUser(ctx.from!.id, ctx.chat!.id);
+    const arg = ctx.match?.toString().trim() ?? "";
+    if (arg === "same") {
+      await replyResult(ctx, app.setWeekendWindow(ctx.from!.id, "same"));
+      return;
+    }
+    if (arg === "off") {
+      // Zero-length sentinel; parseActiveWindow rejects it by design.
+      await replyResult(ctx, app.setWeekendWindow(ctx.from!.id, NO_WINDOW));
+      return;
+    }
+    const parts = arg.split(/\s+/).filter(Boolean);
+    if (parts.length !== 2) {
+      await ctx.reply(
+        "Set your weekend Active Window (Sat–Sun; same day, end after start):",
+        { reply_markup: weekendWindowPresetsKeyboard() },
+      );
+      return;
+    }
+    await replyResult(
+      ctx,
+      app.setWeekendWindowStrings(ctx.from!.id, parts[0]!, parts[1]!),
+    );
+  });
+
   bot.command("interval", async (ctx) => {
     if (!(await ensurePrivate(ctx))) return;
     store.ensureUser(ctx.from!.id, ctx.chat!.id);
@@ -204,6 +234,28 @@ export function createBot(
         return;
       }
       await replyResult(ctx, app.setTimezone(userId, zone));
+      return;
+    }
+
+    if (data.startsWith("win:wkd:")) {
+      const rest = data.slice("win:wkd:".length);
+      if (rest === "custom") {
+        await ctx.reply("Send /weekend 10:00 14:00");
+        return;
+      }
+      if (rest === "same") {
+        await replyResult(ctx, app.setWeekendWindow(userId, "same"));
+        return;
+      }
+      if (rest === "off") {
+        await replyResult(ctx, app.setWeekendWindow(userId, NO_WINDOW));
+        return;
+      }
+      const [start, end] = rest.split("-");
+      await replyResult(
+        ctx,
+        app.setWeekendWindowStrings(userId, start!, end!),
+      );
       return;
     }
 
@@ -409,6 +461,12 @@ async function replyResult(ctx: Context, result: AppResult): Promise<void> {
       await ctx.reply(
         "Timezone saved. Now set your Active Window (same times every day; no overnight ranges):",
         { reply_markup: windowPresetsKeyboard() },
+      );
+      return;
+    case "setup_weekend":
+      await ctx.reply(
+        "Weekdays saved. Now your weekend Active Window (same rules: same day, end after start):",
+        { reply_markup: weekendWindowPresetsKeyboard() },
       );
       return;
     case "setup_complete":

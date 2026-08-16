@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
 import type { ActiveWindow } from "./active-window.js";
+import { NO_WINDOW } from "./active-window.js";
 import {
   nextFireAt,
   firesDueAt,
@@ -104,6 +105,93 @@ describe("Reminder schedule grid", () => {
     expect(next?.setZone("UTC").toISO()).toBe(
       DateTime.fromISO("2026-03-15T02:00:00", { zone: "UTC" }).toISO(),
     );
+  });
+});
+
+describe("Weekend Active Window", () => {
+  // Weekday window excludes 10:00; weekend window excludes 11:00+.
+  const weekday: ActiveWindow = { startMinutes: 11 * 60, endMinutes: 18 * 60 };
+  const weekend: ActiveWindow = { startMinutes: 10 * 60, endMinutes: 14 * 60 };
+  // 2026-03-14 is a Saturday; 2026-03-11 a Wednesday.
+  const sat = (t: string) => at(`2026-03-14T${t}`);
+  const wed = (t: string) => at(`2026-03-11T${t}`);
+
+  it("firesDueAt uses the weekend window on Saturday", () => {
+    expect(
+      firesDueAt({
+        now: sat("10:00:00"),
+        window: weekday,
+        weekendWindow: weekend,
+        intervalMinutes: 60,
+        zone,
+      }),
+    ).toBe(true);
+    // 15:00 is inside the weekday window but Saturday ignores it.
+    expect(
+      firesDueAt({
+        now: sat("15:00:00"),
+        window: weekday,
+        weekendWindow: weekend,
+        intervalMinutes: 60,
+        zone,
+      }),
+    ).toBe(false);
+  });
+
+  it("firesDueAt uses the weekday window on Wednesday", () => {
+    expect(
+      firesDueAt({
+        now: wed("11:00:00"),
+        window: weekday,
+        weekendWindow: weekend,
+        intervalMinutes: 60,
+        zone,
+      }),
+    ).toBe(true);
+    // 10:00 is inside the weekend window but Wednesday ignores it.
+    expect(
+      firesDueAt({
+        now: wed("10:00:00"),
+        window: weekday,
+        weekendWindow: weekend,
+        intervalMinutes: 60,
+        zone,
+      }),
+    ).toBe(false);
+  });
+
+  it("nextFireAt skips a weekend whose sentinel window is empty and lands on Monday's first slot", () => {
+    const next = nextFireAt({
+      now: sat("09:00:00"),
+      window: { startMinutes: 9 * 60, endMinutes: 18 * 60 },
+      weekendWindow: NO_WINDOW,
+      intervalMinutes: 20,
+      zone,
+    });
+    expect(next?.toISO()).toBe(at("2026-03-16T09:00:00").toISO());
+  });
+
+  it("snoozeTargetIso checks containment against the weekend window on a Saturday target", () => {
+    // 13:56 Sat + 5 min = 14:01, outside the weekend window 10:00–14:00
+    // even though the weekday window would allow it.
+    expect(
+      snoozeTargetIso({
+        now: sat("13:56:00"),
+        snoozeMinutes: 5,
+        window: weekday,
+        weekendWindow: weekend,
+        zone,
+      }),
+    ).toBeNull();
+    expect(
+      snoozeTargetIso({
+        now: sat("12:56:00"),
+        snoozeMinutes: 5,
+        window: weekday,
+        weekendWindow: weekend,
+        zone,
+      }),
+    ).toBe(utcIso("2026-03-14T13:01:00"));
   });
 });
 

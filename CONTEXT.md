@@ -21,7 +21,7 @@ The second Activity: a periodic stand-and-stretch prompt. Interval defaults to e
 _Avoid_: Workout, exercise (too heavy), pause (already the product name)
 
 **Active Window**:
-The daily time range during which Reminders may fire for a User; shared across all of that User's Activities. The same window applies every calendar day. Start and end are on the same local calendar day (end after start); ranges must not cross midnight.
+The daily time range during which Reminders may fire for a User; shared across all of that User's Activities. The weekday window applies Monday–Friday; an optional weekend window (Saturday–Sunday) applies otherwise, defaulting to the same hours. Start and end are on the same local calendar day (end after start); ranges must not cross midnight.
 _Avoid_: Configured time, schedule hours, work hours (unless we later mean work specifically)
 
 **Interval**:

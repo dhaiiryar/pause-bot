@@ -34,6 +34,7 @@ export async function tickReminders(options: {
       const due = reminderDueAt({
         now,
         window: user.activeWindow,
+        weekendWindow: user.weekendActiveWindow,
         intervalMinutes: activity.intervalMinutes,
         zone: user.timezone,
         snoozeUntilIso: activity.snoozeUntilIso,
