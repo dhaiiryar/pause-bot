@@ -199,6 +199,67 @@ describe("Bot handlers (fake Telegram API)", () => {
     expect(lastText()).toMatch(/setup/i);
   });
 
+  it("/interval with no arg replies with the preset Interval keyboard", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval"));
+    expect(lastText()).toMatch(/interval/i);
+    const msg = [...sent].reverse().find((s) => s.method === "sendMessage");
+    const markup = msg?.payload["reply_markup"] as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const datas = markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(datas).toContain("ivl:20");
+  });
+
+  it("/interval 30 persists the Interval and confirms it", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval 30"));
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(30);
+    expect(lastText()).toMatch(/30 minutes/i);
+  });
+
+  it("rejects an off-preset /interval argument", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval 25"));
+    expect(lastText()).toMatch(/Interval must be one of/i);
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(20);
+  });
+
+  it("ivl:45 callback persists the Interval", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("ivl:45"));
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(45);
+    expect(lastText()).toMatch(/45 minutes/i);
+  });
+
+  it("/status shows the stored Interval, not the default constant", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval 45"));
+    await bot.handleUpdate(privateUpdate("/status"));
+    expect(lastText()).toMatch(/every 45 minutes/i);
+  });
+
   it("Done on latest Reminder strips buttons and does not set Snooze", async () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "UTC");

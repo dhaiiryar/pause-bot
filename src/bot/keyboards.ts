@@ -3,6 +3,7 @@ import { COMMON_TIMEZONES } from "./app.js";
 import {
   EYE_REST_ACTIVITY_ID,
   EYE_REST_SNOOZE_MINUTES,
+  VALID_INTERVAL_MINUTES,
 } from "../domain/activities.js";
 
 export function timezoneKeyboard(): InlineKeyboard {
@@ -25,6 +26,7 @@ export function mainMenuKeyboard(eyeRestOn: boolean): InlineKeyboard {
   kb.text("Status", "act:status");
   kb.text("Stats", "act:stats");
   kb.text("Change window", "act:window");
+  kb.text("Interval", "act:interval");
   kb.row();
   kb.text("Change timezone", "act:timezone");
   kb.text("Delete my data", "act:delete_confirm");
@@ -48,6 +50,14 @@ export function windowPresetsKeyboard(): InlineKeyboard {
     .text("00:00–23:59 (all day)", "win:00:00-23:59")
     .row()
     .text("Custom: /window HH:MM HH:MM", "win:custom");
+}
+
+export function intervalPresetsKeyboard(): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const m of VALID_INTERVAL_MINUTES) {
+    kb.text(`${m} min`, `ivl:${m}`);
+  }
+  return kb;
 }
 
 export function reminderKeyboard(): InlineKeyboard {

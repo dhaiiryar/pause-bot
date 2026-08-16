@@ -264,6 +264,19 @@ export class UserStore {
     }
   }
 
+  setIntervalMinutes(
+    telegramUserId: number,
+    activityId: ActivityId,
+    intervalMinutes: number,
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE user_activities SET interval_minutes = ?
+         WHERE telegram_user_id = ? AND activity_id = ?`,
+      )
+      .run(intervalMinutes, telegramUserId, activityId);
+  }
+
   setLastFireIso(
     telegramUserId: number,
     activityId: ActivityId,

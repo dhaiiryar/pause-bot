@@ -74,6 +74,7 @@ WantedBy=multi-user.target
 | `/on` / `/off` | Eye Rest on/off |
 | `/timezone [IANA]` | Set or pick timezone |
 | `/window [HH:MM HH:MM]` | Set or pick Active Window |
+| `/interval [minutes]` | Set Eye Rest interval (10, 15, 20, 30, 45, 60) |
 | `/delete` | Wipe all data (confirm) |
 
 ## Tests

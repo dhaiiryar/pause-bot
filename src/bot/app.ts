@@ -5,8 +5,8 @@ import {
 } from "../domain/active-window.js";
 import {
   EYE_REST_ACTIVITY_ID,
-  EYE_REST_INTERVAL_MINUTES,
   EYE_REST_SNOOZE_MINUTES,
+  VALID_INTERVAL_MINUTES,
   type ActivityId,
 } from "../domain/activities.js";
 import { snoozeTargetIso } from "../domain/schedule.js";
@@ -28,6 +28,7 @@ export type AppResult =
   | { kind: "status"; user: UserRecord }
   | { kind: "turned_on"; user: UserRecord }
   | { kind: "turned_off"; user: UserRecord }
+  | { kind: "interval_set"; user: UserRecord }
   | { kind: "stats"; user: UserRecord; stats: AdherenceStats }
   | { kind: "deleted" }
   | { kind: "need_setup" }
@@ -118,6 +119,26 @@ export class BotApp {
     if (!user?.setupComplete) return { kind: "need_setup" };
     this.store.setActivityOn(telegramUserId, EYE_REST_ACTIVITY_ID, false);
     return { kind: "turned_off", user: this.store.getUser(telegramUserId)! };
+  }
+
+  setInterval(telegramUserId: number, minutes: number): AppResult {
+    const user = this.store.getUser(telegramUserId);
+    if (!user?.setupComplete) return { kind: "need_setup" };
+    if (!(VALID_INTERVAL_MINUTES as readonly number[]).includes(minutes)) {
+      return {
+        kind: "error",
+        message: `Interval must be one of: ${VALID_INTERVAL_MINUTES.join(", ")} minutes.`,
+      };
+    }
+    this.store.setIntervalMinutes(
+      telegramUserId,
+      EYE_REST_ACTIVITY_ID,
+      minutes,
+    );
+    return {
+      kind: "interval_set",
+      user: this.store.getUser(telegramUserId)!,
+    };
   }
 
   deleteUser(telegramUserId: number): AppResult {
@@ -248,7 +269,7 @@ export function formatStatus(user: UserRecord): string {
     "Pause Bot status",
     `Timezone: ${user.timezone}`,
     `Active Window: ${window} (every day)`,
-    `Eye Rest: ${eye.on ? "on" : "off"} every ${EYE_REST_INTERVAL_MINUTES} minutes`,
+    `Eye Rest: ${eye.on ? "on" : "off"} every ${eye.intervalMinutes} minutes`,
   ].join("\n");
 }
 

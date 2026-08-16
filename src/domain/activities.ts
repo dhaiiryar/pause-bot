@@ -6,6 +6,9 @@ export const EYE_REST_INTERVAL_MINUTES = 20;
 
 export const EYE_REST_SNOOZE_MINUTES = 5;
 
+/** Preset Intervals a User may choose for Eye Rest (minutes). */
+export const VALID_INTERVAL_MINUTES = [10, 15, 20, 30, 45, 60] as const;
+
 export const EYE_REST_MESSAGE =
   "👁 Eye rest — look ~20 feet / 6 metres away for 20 seconds. (20-20-20)";
 

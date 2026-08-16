@@ -44,6 +44,16 @@ describe("User settings store", () => {
     expect(user?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes).toBe(20);
   });
 
+  it("persists a User-set Interval", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setIntervalMinutes(1, EYE_REST_ACTIVITY_ID, 45);
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(45);
+  });
+
   it("turns Activity off and on without wiping settings", () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "UTC");

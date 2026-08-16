@@ -112,6 +112,58 @@ describe("Bot app intents", () => {
     expect(app.status(1).kind).toBe("need_setup");
   });
 
+  it("sets a valid Interval and reports it", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const result = app.setInterval(1, 30);
+    expect(result.kind).toBe("interval_set");
+    if (result.kind === "interval_set") {
+      expect(result.user.activities[EYE_REST_ACTIVITY_ID].intervalMinutes).toBe(30);
+    }
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(30);
+  });
+
+  it("rejects invalid Interval values without changing the stored Interval", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    for (const bad of [0, -1, 90]) {
+      const result = app.setInterval(1, bad);
+      expect(result.kind).toBe("error");
+      if (result.kind === "error") {
+        expect(result.message).toMatch(/10, 15, 20, 30, 45, 60/);
+      }
+    }
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(20);
+  });
+
+  it("interval change requires setup", () => {
+    store.ensureUser(1, 10);
+    expect(app.setInterval(1, 30).kind).toBe("need_setup");
+  });
+
+  it("keeps a pending Snooze and last fire across an Interval change", () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLastFireIso(1, EYE_REST_ACTIVITY_ID, "2026-03-15T09:40:00.000Z");
+    store.setSnoozeUntilIso(
+      1,
+      EYE_REST_ACTIVITY_ID,
+      "2026-03-15T09:45:00.000Z",
+    );
+    expect(app.setInterval(1, 45).kind).toBe("interval_set");
+    const activity = store.getUser(1)!.activities[EYE_REST_ACTIVITY_ID];
+    expect(activity.intervalMinutes).toBe(45);
+    expect(activity.lastFireIso).toBe("2026-03-15T09:40:00.000Z");
+    expect(activity.snoozeUntilIso).toBe("2026-03-15T09:45:00.000Z");
+  });
+
   it("records a Done action on the Reminder it answers", () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "UTC");

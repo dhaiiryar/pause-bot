@@ -12,6 +12,7 @@ import {
 import {
   deleteConfirmKeyboard,
   emptyReplyMarkup,
+  intervalPresetsKeyboard,
   mainMenuKeyboard,
   timezoneKeyboard,
   windowPresetsKeyboard,
@@ -39,6 +40,7 @@ export const BOT_COMMANDS: readonly BotCommand[] = [
   { command: "off", description: "Turn Eye Rest off" },
   { command: "timezone", description: "Set or pick timezone" },
   { command: "window", description: "Set or pick Active Window" },
+  { command: "interval", description: "Set Eye Rest interval" },
   { command: "delete", description: "Wipe all your data" },
 ];
 
@@ -127,6 +129,18 @@ export function createBot(
     );
   });
 
+  bot.command("interval", async (ctx) => {
+    if (!(await ensurePrivate(ctx))) return;
+    store.ensureUser(ctx.from!.id, ctx.chat!.id);
+    const arg = ctx.match?.toString().trim();
+    if (!arg) {
+      await replyIntervalPresets(ctx);
+      return;
+    }
+    const minutes = Number(arg);
+    await replyResult(ctx, app.setInterval(ctx.from!.id, minutes));
+  });
+
   bot.on("callback_query:data", async (ctx) => {
     if (!ctx.chat || ctx.chat.type !== "private" || !ctx.from) {
       await ctx.answerCallbackQuery({ text: PRIVATE_ONLY_TEXT });
@@ -165,6 +179,12 @@ export function createBot(
       return;
     }
 
+    if (data.startsWith("ivl:")) {
+      const minutes = Number(data.slice(4));
+      await replyResult(ctx, app.setInterval(userId, minutes));
+      return;
+    }
+
     switch (data) {
       case "act:on":
         await replyResult(ctx, app.turnOn(userId));
@@ -182,6 +202,9 @@ export function createBot(
         await ctx.reply("Choose Active Window:", {
           reply_markup: windowPresetsKeyboard(),
         });
+        return;
+      case "act:interval":
+        await replyIntervalPresets(ctx);
         return;
       case "act:timezone":
         await ctx.reply("Pick your timezone:", {
@@ -295,6 +318,12 @@ async function ensurePrivate(ctx: Context): Promise<boolean> {
   return false;
 }
 
+async function replyIntervalPresets(ctx: Context): Promise<void> {
+  await ctx.reply("Pick your Eye Rest interval:", {
+    reply_markup: intervalPresetsKeyboard(),
+  });
+}
+
 async function replyResult(ctx: Context, result: AppResult): Promise<void> {
   switch (result.kind) {
     case "private_only":
@@ -332,6 +361,17 @@ async function replyResult(ctx: Context, result: AppResult): Promise<void> {
           result.user.activities[EYE_REST_ACTIVITY_ID].on,
         ),
       });
+      return;
+    case "interval_set":
+      await ctx.reply(
+        `Interval set to ${result.user.activities[EYE_REST_ACTIVITY_ID].intervalMinutes} minutes.\n` +
+          formatStatus(result.user),
+        {
+          reply_markup: mainMenuKeyboard(
+            result.user.activities[EYE_REST_ACTIVITY_ID].on,
+          ),
+        },
+      );
       return;
     case "turned_on":
       await ctx.reply("Eye Rest is on.\n" + formatStatus(result.user), {
