@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { DateTime } from "luxon";
 import { UserStore } from "../store/user-store.js";
 import { createBot, registerBotCommands, BOT_COMMANDS } from "./create-bot.js";
-import { EYE_REST_ACTIVITY_ID } from "../domain/activities.js";
+import {
+  EYE_REST_ACTIVITY_ID,
+  STRETCH_ACTIVITY_ID,
+} from "../domain/activities.js";
 import { okResult, testBotInfo } from "../test/fake-telegram.js";
 
 type SentMessage = {
@@ -139,17 +142,80 @@ describe("Bot handlers (fake Telegram API)", () => {
     expect(store.getUser(1)).not.toBeNull();
   });
 
-  it("completes setup via timezone callback and window preset", async () => {
+  it("completes setup via timezone callback, window preset, and weekend answer", async () => {
     const bot = botWithCapture();
     await bot.handleUpdate(privateUpdate("/start"));
     await bot.handleUpdate(callbackUpdate("tz:UTC"));
     expect(lastText()).toMatch(/Active Window/i);
     await bot.handleUpdate(callbackUpdate("win:09:00-18:00"));
-    expect(lastText()).toMatch(/Eye Rest is on/i);
+    expect(lastText()).toMatch(/weekend Active Window/i);
+    await bot.handleUpdate(callbackUpdate("win:wkd:same"));
+    expect(lastText()).toMatch(/activities are on/i);
     const user = store.getUser(1)!;
     expect(user.setupComplete).toBe(true);
     expect(user.timezone).toBe("UTC");
+    expect(user.weekendWindowSet).toBe(true);
+    expect(user.weekendActiveWindow).toBeNull();
     expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(true);
+  });
+
+  it("/weekend 10:00 14:00 persists the weekend window", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setWeekendWindow(1, "same");
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/weekend 10:00 14:00"));
+    const user = store.getUser(1)!;
+    expect(user.weekendActiveWindow).toEqual({
+      startMinutes: 10 * 60,
+      endMinutes: 14 * 60,
+    });
+    expect(user.weekendWindowSet).toBe(true);
+    expect(lastText()).toMatch(/Weekend: 10:00–14:00/);
+  });
+
+  it("win:wkd:same callback persists the answered flag", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("win:wkd:same"));
+    const user = store.getUser(1)!;
+    expect(user.weekendWindowSet).toBe(true);
+    expect(user.weekendActiveWindow).toBeNull();
+  });
+
+  it("win:wkd:off callback persists the zero-length sentinel window", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("win:wkd:off"));
+    const user = store.getUser(1)!;
+    expect(user.weekendActiveWindow).toEqual({
+      startMinutes: 0,
+      endMinutes: 0,
+    });
+    expect(user.weekendWindowSet).toBe(true);
+  });
+
+  it("/weekend with no arg replies with the weekend presets keyboard", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/weekend"));
+    expect(lastText()).toMatch(/weekend Active Window/i);
+    const msg = [...sent].reverse().find((s) => s.method === "sendMessage");
+    const markup = msg?.payload["reply_markup"] as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const datas = markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(datas).toContain("win:wkd:same");
+    expect(datas).toContain("win:wkd:off");
+    expect(datas).toContain("win:wkd:10:00-18:00");
   });
 
   it("turns off via /off", async () => {
@@ -170,6 +236,187 @@ describe("Bot handlers (fake Telegram API)", () => {
     await bot.handleUpdate(callbackUpdate("act:delete"));
     expect(store.getUser(1)).toBeNull();
     expect(lastText()).toMatch(/deleted/i);
+  });
+
+  it("replies to /stats with adherence stats", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/stats"));
+    expect(lastText()).toMatch(/stats/i);
+    expect(lastText()).toMatch(/streak/i);
+  });
+
+  it("serves stats via the act:stats callback", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("act:stats"));
+    expect(lastText()).toMatch(/stats/i);
+    expect(lastText()).toMatch(/streak/i);
+  });
+
+  it("/stats before setup asks to finish setup", async () => {
+    store.ensureUser(1, 10);
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/stats"));
+    expect(lastText()).toMatch(/setup/i);
+  });
+
+  it("/interval with no arg replies with the preset Interval keyboard", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval"));
+    expect(lastText()).toMatch(/interval/i);
+    const msg = [...sent].reverse().find((s) => s.method === "sendMessage");
+    const markup = msg?.payload["reply_markup"] as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const datas = markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(datas).toContain("ivl:eye_rest:20");
+  });
+
+  it("/interval 30 persists the Interval and confirms it", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval 30"));
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(30);
+    expect(lastText()).toMatch(/30 minutes/i);
+  });
+
+  it("rejects an off-preset /interval argument", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval 25"));
+    expect(lastText()).toMatch(/Interval must be one of/i);
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(20);
+  });
+
+  it("ivl:45 callback persists the Interval", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("ivl:eye_rest:45"));
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(45);
+    expect(lastText()).toMatch(/Eye Rest interval set to 45 minutes/i);
+  });
+
+  it("/interval stretch 30 sets the Stretch Break Interval", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval stretch 30"));
+    expect(
+      store.getUser(1)?.activities[STRETCH_ACTIVITY_ID].intervalMinutes,
+    ).toBe(30);
+    expect(
+      store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].intervalMinutes,
+    ).toBe(20);
+    expect(lastText()).toMatch(/Stretch Break interval set to 30 minutes/i);
+  });
+
+  it("/interval stretch with no minutes offers the Stretch Break presets", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval stretch"));
+    const msg = [...sent].reverse().find((s) => s.method === "sendMessage");
+    const markup = msg?.payload["reply_markup"] as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    };
+    const datas = markup.inline_keyboard.flat().map((b) => b.callback_data);
+    expect(datas).toContain("ivl:stretch_break:60");
+  });
+
+  it("rejects an unknown /interval activity keyword", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval bogus 30"));
+    expect(lastText()).toMatch(/Unknown activity/i);
+  });
+
+  it("/off with no argument turns off every Activity", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/off"));
+    const user = store.getUser(1)!;
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(false);
+  });
+
+  it("/off stretch turns off only Stretch Break", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/off stretch"));
+    const user = store.getUser(1)!;
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
+  });
+
+  it("act:toggle:stretch_break toggles only Stretch Break", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(callbackUpdate("act:toggle:stretch_break"));
+    let user = store.getUser(1)!;
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(false);
+    expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(true);
+    await bot.handleUpdate(callbackUpdate("act:toggle:stretch_break"));
+    user = store.getUser(1)!;
+    expect(user.activities[STRETCH_ACTIVITY_ID].on).toBe(true);
+  });
+
+  it("Done on latest Stretch Break Reminder strips its buttons", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    store.setLatestReminderMessageId(1, STRETCH_ACTIVITY_ID, 66);
+    const bot = botWithCapture();
+    await bot.handleUpdate(
+      callbackUpdate("rem:done:stretch_break", 1, 10, 66),
+    );
+    const edit = sent.find((s) => s.method === "editMessageReplyMarkup");
+    expect(edit?.payload).toMatchObject({
+      chat_id: 10,
+      message_id: 66,
+      reply_markup: { inline_keyboard: [] },
+    });
+    const answered = sent.find((s) => s.method === "answerCallbackQuery");
+    expect(String(answered?.payload["text"] ?? "")).toMatch(/done/i);
+  });
+
+  it("/status shows the stored Interval, not the default constant", async () => {
+    store.ensureUser(1, 10);
+    store.setTimezone(1, "UTC");
+    store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    const bot = botWithCapture();
+    await bot.handleUpdate(privateUpdate("/interval 45"));
+    await bot.handleUpdate(privateUpdate("/status"));
+    expect(lastText()).toMatch(/every 45 minutes/i);
   });
 
   it("Done on latest Reminder strips buttons and does not set Snooze", async () => {

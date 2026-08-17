@@ -1,16 +1,17 @@
 # Pause Bot
 
-Multi-user Telegram bot that reminds people to do healthcare activities on a schedule. **V1** ships **Eye Rest** only: every 20 minutes inside each user’s Active Window, with a 20-20-20 message.
+Multi-user Telegram bot that reminds people to do healthcare activities on a schedule. Ships two Activities: **Eye Rest** (every 20 minutes by default, 20-20-20 message) and **Stretch Break** (every 60 minutes by default), each inside the user's shared Active Window (weekday hours, plus an optional separate weekend window).
 
 Domain language: [`CONTEXT.md`](./CONTEXT.md). Decisions: [`docs/adr/`](./docs/adr/).
 
 ## Features (V1)
 
 - Public multi-user; **private chats only**
-- Setup: **Timezone** (IANA, common list + Other) → **Active Window** → Eye Rest **on**
-- Reminders on a grid from window start, every 20 minutes
+- Setup: **Timezone** (IANA, common list + Other) → weekday **Active Window** → weekend window question → Activities **on**
+- Two Activities, each on its own Interval grid from window start: **Eye Rest** (default 20 min) and **Stretch Break** (default 60 min)
+- Per-Activity reminders, toggles, and intervals (`/on [eyes|stretch]`, `/interval [eyes|stretch] [minutes]`)
 - Each Reminder offers **Done** (no schedule change) and **Snooze** (+5 min delay-only)
-- `/on` `/off` (settings kept), `/delete` (wipe), `/status`, `/window`, `/timezone`
+- `/on` `/off` (settings kept), `/delete` (wipe), `/status`, `/stats`, `/window`, `/timezone`
 - Menu-first inline keyboards
 - Permanent Telegram delivery failure → auto-off, keep settings
 - TypeScript + long polling + SQLite
@@ -70,9 +71,12 @@ WantedBy=multi-user.target
 |--------|---------|
 | `/start` | Setup or status |
 | `/status` | Current settings |
-| `/on` / `/off` | Eye Rest on/off |
+| `/stats` | Reminder adherence stats per Activity |
+| `/on [eyes\|stretch]` / `/off [eyes\|stretch]` | Activities on/off (no argument = all) |
 | `/timezone [IANA]` | Set or pick timezone |
-| `/window [HH:MM HH:MM]` | Set or pick Active Window |
+| `/window [HH:MM HH:MM]` | Set or pick weekday Active Window |
+| `/weekend [HH:MM HH:MM \| same \| off]` | Set weekend window (default: same as weekdays) |
+| `/interval [eyes\|stretch] [minutes]` | Set an Activity's interval (10, 15, 20, 30, 45, 60) |
 | `/delete` | Wipe all data (confirm) |
 
 ## Tests

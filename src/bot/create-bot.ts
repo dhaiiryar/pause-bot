@@ -2,22 +2,31 @@ import { Bot, type Context, type BotConfig } from "grammy";
 import type { BotCommand } from "grammy/types";
 import {
   BotApp,
+  formatAdherence,
   formatSetupComplete,
   formatStatus,
+  parseActivityScope,
   type AppResult,
   type Clock,
   type ReminderActionResult,
 } from "./app.js";
 import {
+  activityChooserKeyboard,
   deleteConfirmKeyboard,
   emptyReplyMarkup,
+  intervalPresetsKeyboard,
   mainMenuKeyboard,
   timezoneKeyboard,
+  weekendWindowPresetsKeyboard,
   windowPresetsKeyboard,
 } from "./keyboards.js";
 import type { UserStore } from "../store/user-store.js";
+import { NO_WINDOW } from "../domain/active-window.js";
 import {
+  ACTIVITY_IDS,
+  ACTIVITY_LABELS,
   EYE_REST_ACTIVITY_ID,
+  isActivityId,
   type ActivityId,
 } from "../domain/activities.js";
 
@@ -33,10 +42,13 @@ export type CreateBotOptions = BotConfig<Context> & {
 export const BOT_COMMANDS: readonly BotCommand[] = [
   { command: "start", description: "Setup or show status" },
   { command: "status", description: "Current settings" },
-  { command: "on", description: "Turn Eye Rest on" },
-  { command: "off", description: "Turn Eye Rest off" },
+  { command: "stats", description: "Your stats per Activity" },
+  { command: "on", description: "Turn activities on (all, or: eyes, stretch)" },
+  { command: "off", description: "Turn activities off (all, or: eyes, stretch)" },
   { command: "timezone", description: "Set or pick timezone" },
   { command: "window", description: "Set or pick Active Window" },
+  { command: "weekend", description: "Set weekend window" },
+  { command: "interval", description: "Set an interval (eyes or stretch)" },
   { command: "delete", description: "Wipe all your data" },
 ];
 
@@ -73,13 +85,33 @@ export function createBot(
   bot.command("on", async (ctx) => {
     if (!(await ensurePrivate(ctx))) return;
     store.ensureUser(ctx.from!.id, ctx.chat!.id);
-    await replyResult(ctx, app.turnOn(ctx.from!.id));
+    const scope = parseActivityScope(ctx.match?.toString());
+    if (scope === null) {
+      await ctx.reply(
+        "Unknown activity. Use: eyes, stretch, or no argument for all.",
+      );
+      return;
+    }
+    await replyResult(ctx, app.turnOn(ctx.from!.id, scope));
   });
 
   bot.command("off", async (ctx) => {
     if (!(await ensurePrivate(ctx))) return;
     store.ensureUser(ctx.from!.id, ctx.chat!.id);
-    await replyResult(ctx, app.turnOff(ctx.from!.id));
+    const scope = parseActivityScope(ctx.match?.toString());
+    if (scope === null) {
+      await ctx.reply(
+        "Unknown activity. Use: eyes, stretch, or no argument for all.",
+      );
+      return;
+    }
+    await replyResult(ctx, app.turnOff(ctx.from!.id, scope));
+  });
+
+  bot.command("stats", async (ctx) => {
+    if (!(await ensurePrivate(ctx))) return;
+    store.ensureUser(ctx.from!.id, ctx.chat!.id);
+    await replyResult(ctx, app.stats(ctx.from!.id));
   });
 
   bot.command("delete", async (ctx) => {
@@ -119,6 +151,65 @@ export function createBot(
     );
   });
 
+  bot.command("weekend", async (ctx) => {
+    if (!(await ensurePrivate(ctx))) return;
+    store.ensureUser(ctx.from!.id, ctx.chat!.id);
+    const arg = ctx.match?.toString().trim() ?? "";
+    if (arg === "same") {
+      await replyResult(ctx, app.setWeekendWindow(ctx.from!.id, "same"));
+      return;
+    }
+    if (arg === "off") {
+      // Zero-length sentinel; parseActiveWindow rejects it by design.
+      await replyResult(ctx, app.setWeekendWindow(ctx.from!.id, NO_WINDOW));
+      return;
+    }
+    const parts = arg.split(/\s+/).filter(Boolean);
+    if (parts.length !== 2) {
+      await ctx.reply(
+        "Set your weekend Active Window (Sat–Sun; same day, end after start):",
+        { reply_markup: weekendWindowPresetsKeyboard() },
+      );
+      return;
+    }
+    await replyResult(
+      ctx,
+      app.setWeekendWindowStrings(ctx.from!.id, parts[0]!, parts[1]!),
+    );
+  });
+
+  bot.command("interval", async (ctx) => {
+    if (!(await ensurePrivate(ctx))) return;
+    store.ensureUser(ctx.from!.id, ctx.chat!.id);
+    const parts = ctx.match?.toString().trim().split(/\s+/).filter(Boolean) ?? [];
+    if (parts.length === 0) {
+      await replyIntervalPresets(ctx, EYE_REST_ACTIVITY_ID);
+      return;
+    }
+    const first = parts[0]!;
+    if (/^\d+$/.test(first)) {
+      // Keyword-less form keeps its plan-002 meaning: Eye Rest minutes.
+      await replyResult(
+        ctx,
+        app.setInterval(ctx.from!.id, Number(first), EYE_REST_ACTIVITY_ID),
+      );
+      return;
+    }
+    const scope = parseActivityScope(first);
+    if (scope === null || scope === "all") {
+      await ctx.reply("Unknown activity. Use: eyes, stretch.");
+      return;
+    }
+    if (parts.length === 1) {
+      await replyIntervalPresets(ctx, scope);
+      return;
+    }
+    await replyResult(
+      ctx,
+      app.setInterval(ctx.from!.id, Number(parts[1]), scope),
+    );
+  });
+
   bot.on("callback_query:data", async (ctx) => {
     if (!ctx.chat || ctx.chat.type !== "private" || !ctx.from) {
       await ctx.answerCallbackQuery({ text: PRIVATE_ONLY_TEXT });
@@ -146,6 +237,28 @@ export function createBot(
       return;
     }
 
+    if (data.startsWith("win:wkd:")) {
+      const rest = data.slice("win:wkd:".length);
+      if (rest === "custom") {
+        await ctx.reply("Send /weekend 10:00 14:00");
+        return;
+      }
+      if (rest === "same") {
+        await replyResult(ctx, app.setWeekendWindow(userId, "same"));
+        return;
+      }
+      if (rest === "off") {
+        await replyResult(ctx, app.setWeekendWindow(userId, NO_WINDOW));
+        return;
+      }
+      const [start, end] = rest.split("-");
+      await replyResult(
+        ctx,
+        app.setWeekendWindowStrings(userId, start!, end!),
+      );
+      return;
+    }
+
     if (data.startsWith("win:")) {
       const rest = data.slice(4);
       if (rest === "custom") {
@@ -157,19 +270,59 @@ export function createBot(
       return;
     }
 
+    if (data.startsWith("act:toggle:")) {
+      const id = data.slice("act:toggle:".length);
+      if (!isActivityId(id)) {
+        await ctx.reply("Unknown action. Try /status.");
+        return;
+      }
+      // Read the current state before mutating, else a second tap toggles back.
+      const isOn = store.getUser(userId)?.activities[id].on ?? false;
+      await replyResult(
+        ctx,
+        isOn ? app.turnOff(userId, id) : app.turnOn(userId, id),
+      );
+      return;
+    }
+
+    if (data.startsWith("act:interval:")) {
+      const id = data.slice("act:interval:".length);
+      if (!isActivityId(id)) {
+        await ctx.reply("Unknown action. Try /status.");
+        return;
+      }
+      await replyIntervalPresets(ctx, id);
+      return;
+    }
+
+    if (data.startsWith("ivl:")) {
+      const [, activityIdRaw, minutesRaw] = data.split(":");
+      if (activityIdRaw === undefined || !isActivityId(activityIdRaw)) {
+        await ctx.reply("Unknown action. Try /status.");
+        return;
+      }
+      await replyResult(
+        ctx,
+        app.setInterval(userId, Number(minutesRaw), activityIdRaw),
+      );
+      return;
+    }
+
     switch (data) {
-      case "act:on":
-        await replyResult(ctx, app.turnOn(userId));
-        return;
-      case "act:off":
-        await replyResult(ctx, app.turnOff(userId));
-        return;
       case "act:status":
         await replyResult(ctx, app.status(userId));
+        return;
+      case "act:stats":
+        await replyResult(ctx, app.stats(userId));
         return;
       case "act:window":
         await ctx.reply("Choose Active Window:", {
           reply_markup: windowPresetsKeyboard(),
+        });
+        return;
+      case "act:interval":
+        await ctx.reply("Which Activity?", {
+          reply_markup: activityChooserKeyboard("act:interval:"),
         });
         return;
       case "act:timezone":
@@ -206,8 +359,8 @@ async function handleReminderCallback(
   }
   const parts = data.split(":");
   const action = parts[1];
-  const activityId = parts[2] as ActivityId | undefined;
-  if (activityId !== EYE_REST_ACTIVITY_ID) {
+  const activityId = parts[2];
+  if (activityId === undefined || !isActivityId(activityId)) {
     await ctx.answerCallbackQuery({ text: "Unknown activity." });
     return;
   }
@@ -284,6 +437,15 @@ async function ensurePrivate(ctx: Context): Promise<boolean> {
   return false;
 }
 
+async function replyIntervalPresets(
+  ctx: Context,
+  activityId: ActivityId,
+): Promise<void> {
+  await ctx.reply(`Pick your ${ACTIVITY_LABELS[activityId]} interval:`, {
+    reply_markup: intervalPresetsKeyboard(activityId),
+  });
+}
+
 async function replyResult(ctx: Context, result: AppResult): Promise<void> {
   switch (result.kind) {
     case "private_only":
@@ -301,28 +463,45 @@ async function replyResult(ctx: Context, result: AppResult): Promise<void> {
         { reply_markup: windowPresetsKeyboard() },
       );
       return;
+    case "setup_weekend":
+      await ctx.reply(
+        "Weekdays saved. Now your weekend Active Window (same rules: same day, end after start):",
+        { reply_markup: weekendWindowPresetsKeyboard() },
+      );
+      return;
     case "setup_complete":
       await ctx.reply(formatSetupComplete(result.user), {
-        reply_markup: mainMenuKeyboard(
-          result.user.activities[EYE_REST_ACTIVITY_ID].on,
-        ),
+        reply_markup: mainMenuKeyboard(result.user.activities),
       });
       return;
     case "status":
       await ctx.reply(formatStatus(result.user), {
-        reply_markup: mainMenuKeyboard(
-          result.user.activities[EYE_REST_ACTIVITY_ID].on,
-        ),
+        reply_markup: mainMenuKeyboard(result.user.activities),
       });
       return;
+    case "stats":
+      await ctx.reply(
+        ACTIVITY_IDS.map((id) =>
+          formatAdherence(ACTIVITY_LABELS[id], result.statsByActivity[id]),
+        ).join("\n\n"),
+        { reply_markup: mainMenuKeyboard(result.user.activities) },
+      );
+      return;
+    case "interval_set":
+      await ctx.reply(
+        `${ACTIVITY_LABELS[result.activityId]} interval set to ${result.user.activities[result.activityId].intervalMinutes} minutes.\n` +
+          formatStatus(result.user),
+        { reply_markup: mainMenuKeyboard(result.user.activities) },
+      );
+      return;
     case "turned_on":
-      await ctx.reply("Eye Rest is on.\n" + formatStatus(result.user), {
-        reply_markup: mainMenuKeyboard(true),
+      await ctx.reply("Activities updated.\n" + formatStatus(result.user), {
+        reply_markup: mainMenuKeyboard(result.user.activities),
       });
       return;
     case "turned_off":
-      await ctx.reply("Eye Rest is off. Settings kept.\n" + formatStatus(result.user), {
-        reply_markup: mainMenuKeyboard(false),
+      await ctx.reply("Activities updated.\n" + formatStatus(result.user), {
+        reply_markup: mainMenuKeyboard(result.user.activities),
       });
       return;
     case "deleted":

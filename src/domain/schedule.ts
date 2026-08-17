@@ -1,12 +1,15 @@
 import { DateTime } from "luxon";
 import {
   type ActiveWindow,
+  effectiveWindow,
   windowContains,
 } from "./active-window.js";
 
 export type ScheduleInput = {
   now: DateTime;
   window: ActiveWindow;
+  /** Optional weekend Active Window; null/undefined = same as weekdays. */
+  weekendWindow?: ActiveWindow | null;
   intervalMinutes: number;
   zone: string;
 };
@@ -57,7 +60,7 @@ export function nextFireAt(input: ScheduleInput): DateTime | null {
     const day = startDay.plus({ days: dayOffset });
     const slots = gridSlotsForDay(
       day,
-      input.window,
+      effectiveWindow(input.window, input.weekendWindow ?? null, day),
       input.intervalMinutes,
     );
     for (const slot of slots) {
@@ -72,11 +75,16 @@ export function nextFireAt(input: ScheduleInput): DateTime | null {
 /** Whether a Reminder should fire at this instant (minute precision on the grid). */
 export function firesDueAt(input: ScheduleInput): boolean {
   const local = localNow(input).set({ second: 0, millisecond: 0 });
+  const window = effectiveWindow(
+    input.window,
+    input.weekendWindow ?? null,
+    local,
+  );
   const minutes = minutesFromMidnight(local);
-  if (!windowContains(input.window, minutes)) {
+  if (!windowContains(window, minutes)) {
     return false;
   }
-  const offset = minutes - input.window.startMinutes;
+  const offset = minutes - window.startMinutes;
   return offset % input.intervalMinutes === 0;
 }
 
@@ -84,6 +92,8 @@ export type SnoozeTargetInput = {
   now: DateTime;
   snoozeMinutes: number;
   window: ActiveWindow;
+  /** Optional weekend Active Window; null/undefined = same as weekdays. */
+  weekendWindow?: ActiveWindow | null;
   zone: string;
 };
 
@@ -93,8 +103,13 @@ export function snoozeTargetIso(input: SnoozeTargetInput): string | null {
     .setZone(input.zone)
     .set({ second: 0, millisecond: 0 })
     .plus({ minutes: input.snoozeMinutes });
+  const window = effectiveWindow(
+    input.window,
+    input.weekendWindow ?? null,
+    local,
+  );
   const minutes = minutesFromMidnight(local);
-  if (!windowContains(input.window, minutes)) {
+  if (!windowContains(window, minutes)) {
     return null;
   }
   return local.toUTC().toISO();
@@ -130,7 +145,10 @@ export function reminderDueAt(input: ReminderDueInput): ReminderDueResult {
     // Only fire on the same local day as the Snooze target; never resurrect next day.
     if (
       !local.hasSame(snoozeLocal, "day") ||
-      !windowContains(input.window, minutesFromMidnight(local))
+      !windowContains(
+        effectiveWindow(input.window, input.weekendWindow ?? null, local),
+        minutesFromMidnight(local),
+      )
     ) {
       return { due: false, clearSnooze: true };
     }

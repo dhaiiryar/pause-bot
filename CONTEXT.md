@@ -9,15 +9,19 @@ A person who chats with the bot in a private chat; each Telegram identity is one
 _Avoid_: Account, customer, member
 
 **Activity**:
-A healthcare practice the bot can prompt someone to do. For a given User an Activity is either on (Reminders may fire) or off (Reminders suppressed; settings kept). Each Activity has its own Interval; only Eye Rest ships in V1.
+A healthcare practice the bot can prompt someone to do. For a given User an Activity is either on (Reminders may fire) or off (Reminders suppressed; settings kept). Each Activity has its own Interval; Eye Rest and Stretch Break ship today.
 _Avoid_: Habit, task, chore, exercise (too sport-specific)
 
 **Eye Rest**:
 The first Activity: a periodic break from near-screen focus. Interval is every 20 minutes inside the Active Window. Each Reminder instructs the classic 20-20-20 pause (look ~20 feet / 6m away for 20 seconds).
 _Avoid_: Using "20-20-20" as the Activity's name in the model (fine in User-facing copy)
 
+**Stretch Break**:
+The second Activity: a periodic stand-and-stretch prompt. Interval defaults to every 60 minutes inside the Active Window. Reminders offer the same Done and Snooze as Eye Rest.
+_Avoid_: Workout, exercise (too heavy), pause (already the product name)
+
 **Active Window**:
-The daily time range during which Reminders may fire for a User; shared across all of that User's Activities. The same window applies every calendar day. Start and end are on the same local calendar day (end after start); ranges must not cross midnight.
+The daily time range during which Reminders may fire for a User; shared across all of that User's Activities. The weekday window applies Monday–Friday; an optional weekend window (Saturday–Sunday) applies otherwise, defaulting to the same hours. Start and end are on the same local calendar day (end after start); ranges must not cross midnight.
 _Avoid_: Configured time, schedule hours, work hours (unless we later mean work specifically)
 
 **Interval**:

@@ -1,9 +1,18 @@
+import type { DateTime } from "luxon";
+
 export type ActiveWindow = {
   /** Minutes from local midnight, inclusive. */
   startMinutes: number;
   /** Minutes from local midnight, exclusive. */
   endMinutes: number;
 };
+
+/**
+ * Zero-length window sentinel meaning "off on weekends": windowContains
+ * never matches because end is exclusive. Invalid via parseActiveWindow by
+ * design; stored as {0,0} columns. (ADR-0011)
+ */
+export const NO_WINDOW: ActiveWindow = { startMinutes: 0, endMinutes: 0 };
 
 export type ParseActiveWindowResult =
   | { ok: true; window: ActiveWindow }
@@ -50,6 +59,20 @@ export function windowContains(
     minutesFromMidnight >= window.startMinutes &&
     minutesFromMidnight < window.endMinutes
   );
+}
+
+/**
+ * The Active Window in effect on a local calendar day: the weekend window
+ * on Sat/Sun when set, else the weekday window. Null weekend = same as
+ * weekdays. (ADR-0011)
+ */
+export function effectiveWindow(
+  weekday: ActiveWindow,
+  weekend: ActiveWindow | null,
+  localDay: DateTime,
+): ActiveWindow {
+  const dow = localDay.weekday; // 1 Mon … 7 Sun
+  return weekend !== null && (dow === 6 || dow === 7) ? weekend : weekday;
 }
 
 export function formatMinutes(minutes: number): string {

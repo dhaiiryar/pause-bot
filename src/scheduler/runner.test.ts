@@ -6,7 +6,13 @@ import { DateTime } from "luxon";
 import { Bot, GrammyError } from "grammy";
 import { UserStore } from "../store/user-store.js";
 import { tickReminders } from "./runner.js";
-import { EYE_REST_ACTIVITY_ID, EYE_REST_MESSAGE } from "../domain/activities.js";
+import {
+  EYE_REST_ACTIVITY_ID,
+  EYE_REST_MESSAGE,
+  EYE_REST_MESSAGES,
+  STRETCH_ACTIVITY_ID,
+  STRETCH_MESSAGES,
+} from "../domain/activities.js";
 import { okResult, testBotInfo } from "../test/fake-telegram.js";
 
 describe("Reminder runner", () => {
@@ -27,6 +33,8 @@ describe("Reminder runner", () => {
     store.ensureUser(1, 10);
     store.setTimezone(1, "UTC");
     store.setActiveWindow(1, { startMinutes: 9 * 60, endMinutes: 18 * 60 });
+    // Setup auto-ons every Activity; Eye Rest tests want Eye Rest only.
+    store.setActivityOn(1, STRETCH_ACTIVITY_ID, false);
   }
 
   function botThatSends(
@@ -76,12 +84,58 @@ describe("Reminder runner", () => {
     const messages: Array<{ chatId: number; text: string }> = [];
     const bot = botThatSends((chatId, text) => messages.push({ chatId, text }));
     const now = DateTime.fromISO("2026-03-15T09:00:00", { zone: "UTC" });
-    const result = await tickReminders({ store, bot, now: () => now });
+    const result = await tickReminders({
+      store,
+      bot,
+      now: () => now,
+      pickCopy: (_activityId) => EYE_REST_MESSAGE,
+    });
     expect(result.sent).toBe(1);
     expect(messages[0]).toEqual({ chatId: 10, text: EYE_REST_MESSAGE });
     expect(store.getUser(1)?.activities[EYE_REST_ACTIVITY_ID].lastFireIso).toBe(
       "2026-03-15T09:00:00.000Z",
     );
+    expect(
+      store.listReminderEvents(
+        1,
+        EYE_REST_ACTIVITY_ID,
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toEqual([{ fireIso: "2026-03-15T09:00:00.000Z", action: null }]);
+  });
+
+  it("sends one Reminder per due Activity when both are on", async () => {
+    setupUser();
+    store.setActivityOn(1, STRETCH_ACTIVITY_ID, true);
+    const messages: string[] = [];
+    const bot = botThatSends((_c, text) => messages.push(text));
+    const now = DateTime.fromISO("2026-03-15T10:00:00", { zone: "UTC" });
+    const result = await tickReminders({ store, bot, now: () => now });
+    expect(result.sent).toBe(2);
+    expect(
+      messages.filter((m) => (EYE_REST_MESSAGES as readonly string[]).includes(m)),
+    ).toHaveLength(1);
+    expect(
+      messages.filter((m) => (STRETCH_MESSAGES as readonly string[]).includes(m)),
+    ).toHaveLength(1);
+    expect(
+      store.getUser(1)?.activities[STRETCH_ACTIVITY_ID]
+        .latestReminderMessageId,
+    ).toBe(2);
+  });
+
+  it("uses the injected copy picker for the Reminder text", async () => {
+    setupUser();
+    const messages: string[] = [];
+    const bot = botThatSends((_c, text) => messages.push(text));
+    const now = DateTime.fromISO("2026-03-15T09:00:00", { zone: "UTC" });
+    await tickReminders({
+      store,
+      bot,
+      now: () => now,
+      pickCopy: (_activityId) => EYE_REST_MESSAGES[3]!,
+    });
+    expect(messages[0]).toBe(EYE_REST_MESSAGES[3]);
   });
 
   it("attaches Done and Snooze and records latest Reminder message id", async () => {
@@ -183,6 +237,39 @@ describe("Reminder runner", () => {
     expect(count).toBe(0);
   });
 
+  it("applies the weekend window on a Saturday", async () => {
+    setupUser();
+    store.setWeekendWindow(1, { startMinutes: 10 * 60, endMinutes: 14 * 60 });
+    let count = 0;
+    const bot = botThatSends(() => {
+      count += 1;
+    });
+
+    // 2026-03-14 is a Saturday (luxon weekday 6): 09:00 is inside the
+    // weekday window but not the weekend one.
+    const satNine = DateTime.fromISO("2026-03-14T09:00:00", { zone: "UTC" });
+    expect(satNine.weekday).toBe(6);
+    expect((await tickReminders({ store, bot, now: () => satNine })).sent).toBe(0);
+
+    const satTen = DateTime.fromISO("2026-03-14T10:00:00", { zone: "UTC" });
+    expect((await tickReminders({ store, bot, now: () => satTen })).sent).toBe(1);
+    expect(count).toBe(1);
+  });
+
+  it("applies the weekday window on a Monday", async () => {
+    setupUser();
+    store.setWeekendWindow(1, { startMinutes: 10 * 60, endMinutes: 14 * 60 });
+    let count = 0;
+    const bot = botThatSends(() => {
+      count += 1;
+    });
+    // 2026-03-16 is a Monday: the weekday window 09:00–18:00 applies again.
+    const monNine = DateTime.fromISO("2026-03-16T09:00:00", { zone: "UTC" });
+    expect(monNine.weekday).toBe(1);
+    expect((await tickReminders({ store, bot, now: () => monNine })).sent).toBe(1);
+    expect(count).toBe(1);
+  });
+
   it("auto-offs on permanent delivery failure and keeps settings", async () => {
     setupUser();
     const err = new GrammyError(
@@ -203,5 +290,12 @@ describe("Reminder runner", () => {
     expect(user.activities[EYE_REST_ACTIVITY_ID].on).toBe(false);
     expect(user.timezone).toBe("UTC");
     expect(user.activeWindow).not.toBeNull();
+    expect(
+      store.listReminderEvents(
+        1,
+        EYE_REST_ACTIVITY_ID,
+        "2026-01-01T00:00:00.000Z",
+      ),
+    ).toEqual([]);
   });
 });
